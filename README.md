@@ -85,14 +85,6 @@ SHA-NI     V4    sha-ni-real      1       845000.12       305.77
 SCALAR     V4    scalar-core      1       412000.55       622.11
 ```
 
-## Screenshot Placeholder
+## Screenshot
 
-Add GUI screenshot here (recommended path):
-
-`docs/screenshot-main-window.png`
-
-and embed it with:
-
-```md
 ![JSha256 GUI](docs/screenshot-main-window.png)
-```
