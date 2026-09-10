@@ -270,6 +270,74 @@ struct SimdInfo {
     bool sha = false;
 };
 
+struct CpuInfo {
+    std::string vendor;
+    std::string brand;
+    std::string arch;
+    unsigned int logical_cores = 0;
+};
+
+static std::string trim_spaces(std::string s) {
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\0')) {
+        s.pop_back();
+    }
+    size_t start = 0;
+    while (start < s.size() && s[start] == ' ') {
+        ++start;
+    }
+    return s.substr(start);
+}
+
+static CpuInfo detect_cpu_info() {
+    CpuInfo out{};
+
+    int r0[4]{};
+    __cpuid(r0, 0);
+    const int max_leaf = r0[0];
+
+    char vendor[13]{};
+    std::memcpy(vendor + 0, &r0[1], 4);
+    std::memcpy(vendor + 4, &r0[3], 4);
+    std::memcpy(vendor + 8, &r0[2], 4);
+    vendor[12] = '\0';
+    out.vendor = vendor;
+
+    if (max_leaf >= 0x80000004) {
+        int b2[4]{};
+        int b3[4]{};
+        int b4[4]{};
+        __cpuid(b2, 0x80000002);
+        __cpuid(b3, 0x80000003);
+        __cpuid(b4, 0x80000004);
+        char brand[49]{};
+        std::memcpy(brand + 0, b2, sizeof(b2));
+        std::memcpy(brand + 16, b3, sizeof(b3));
+        std::memcpy(brand + 32, b4, sizeof(b4));
+        brand[48] = '\0';
+        out.brand = trim_spaces(std::string(brand));
+    }
+
+    SYSTEM_INFO si{};
+    GetNativeSystemInfo(&si);
+    switch (si.wProcessorArchitecture) {
+        case PROCESSOR_ARCHITECTURE_AMD64:
+            out.arch = "x64";
+            break;
+        case PROCESSOR_ARCHITECTURE_INTEL:
+            out.arch = "x86";
+            break;
+        case PROCESSOR_ARCHITECTURE_ARM64:
+            out.arch = "ARM64";
+            break;
+        default:
+            out.arch = "Unknown";
+            break;
+    }
+    out.logical_cores = si.dwNumberOfProcessors;
+
+    return out;
+}
+
 static bool os_supports_avx_state() {
     int regs[4]{};
     __cpuid(regs, 1);
@@ -753,7 +821,13 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
 
 static std::string format_cpu_features() {
     const SimdInfo simd = detect_simd();
+    const CpuInfo cpu = detect_cpu_info();
     std::ostringstream oss;
+    oss << "CPU info\r\n";
+    oss << "- Vendor:   " << (cpu.vendor.empty() ? "n/a" : cpu.vendor) << "\r\n";
+    oss << "- Model:    " << (cpu.brand.empty() ? "n/a" : cpu.brand) << "\r\n";
+    oss << "- Arch:     " << cpu.arch << "\r\n";
+    oss << "- Logical:  " << cpu.logical_cores << "\r\n\r\n";
     oss << "Detected SIMD support\r\n";
     oss << "- SSE2:    " << (simd.sse2 ? "yes" : "no") << "\r\n";
     oss << "- SSE4.1:  " << (simd.sse41 ? "yes" : "no") << "\r\n";
