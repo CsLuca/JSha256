@@ -4,6 +4,8 @@ Current release: **v1.0.0**
 
 Release status: build and `--selftest` validated locally on Windows (MSYS2 UCRT64).
 
+Release notes draft: `RELEASE_NOTES_v1.0.0.md`
+
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![Language](https://img.shields.io/badge/language-C%2B%2B17-00599C)
 ![Build](https://img.shields.io/badge/build-MSYS2%20UCRT64-brightgreen)
