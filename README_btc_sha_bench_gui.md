@@ -1,4 +1,4 @@
-# Bitcoin SHA256 Benchmark GUI (V1..V5)
+# Bitcoin SHA256 Benchmark GUI (V1..V14)
 
 This project provides a single Windows executable in C++ that:
 
@@ -52,6 +52,7 @@ The GUI prints:
 - detected SIMD features,
 - correctness report (known nonces and backend consistency checks),
 - ranked table columns: `SIMD`, `Ver`, `Backend`, `Lanes`, `Hash/s`, `Std H/s`, `Cycles/hash`, `Std Cyc`.
+- text bar chart for top throughput rows.
 
 After each run, results are also exported in:
 

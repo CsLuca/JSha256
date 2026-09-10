@@ -1349,6 +1349,8 @@ static std::string format_cpu_features() {
     return oss.str();
 }
 
+static std::string build_bar_chart(const std::vector<BenchmarkResult>& rows);
+
 static std::string format_results(const std::vector<BenchmarkResult>& rows, const ValidationReport& validation) {
     std::vector<BenchmarkResult> sorted = rows;
     std::sort(sorted.begin(), sorted.end(), [](const BenchmarkResult& a, const BenchmarkResult& b) {
@@ -1358,6 +1360,7 @@ static std::string format_results(const std::vector<BenchmarkResult>& rows, cons
     std::ostringstream oss;
     oss << format_cpu_features();
     oss << validation.text;
+    oss << build_bar_chart(rows);
     oss << std::left << std::setw(10) << "SIMD"
         << std::setw(6) << "Ver"
         << std::setw(17) << "Backend"
@@ -1379,6 +1382,7 @@ static std::string format_results(const std::vector<BenchmarkResult>& rows, cons
             << std::setw(12) << std::fixed << std::setprecision(2) << r.std_cycles_per_hash
             << "\r\n";
     }
+    oss << "\r\nResults exported to: benchmark-output/results-<timestamp>.{csv,json}\r\n";
     return oss.str();
 }
 
@@ -1435,6 +1439,40 @@ static void export_results_files(const std::vector<BenchmarkResult>& rows, const
         json << "  ]\n";
         json << "}\n";
     }
+}
+
+static std::string build_bar_chart(const std::vector<BenchmarkResult>& rows) {
+    if (rows.empty()) {
+        return "";
+    }
+
+    std::vector<BenchmarkResult> sorted = rows;
+    std::sort(sorted.begin(), sorted.end(), [](const BenchmarkResult& a, const BenchmarkResult& b) {
+        return a.hashes_per_sec > b.hashes_per_sec;
+    });
+
+    const size_t N = std::min<size_t>(10, sorted.size());
+    double max_h = 0.0;
+    for (size_t i = 0; i < N; ++i) {
+        max_h = std::max(max_h, sorted[i].hashes_per_sec);
+    }
+    if (max_h <= 0.0) {
+        return "";
+    }
+
+    std::ostringstream oss;
+    oss << "Top 10 Hash/s (bar chart)\r\n";
+    for (size_t i = 0; i < N; ++i) {
+        const auto& r = sorted[i];
+        const int len = std::max(1, static_cast<int>(std::round((r.hashes_per_sec / max_h) * 28.0)));
+        oss << std::setw(3) << (i + 1) << ". "
+            << std::setw(4) << r.version << " "
+            << std::setw(10) << r.simd << " "
+            << std::string(static_cast<size_t>(len), '#') << " "
+            << std::fixed << std::setprecision(0) << r.hashes_per_sec << "\r\n";
+    }
+    oss << "\r\n";
+    return oss.str();
 }
 
 } // namespace bench
@@ -1519,7 +1557,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     HWND hwnd = CreateWindowExA(
         0,
         kClassName,
-        "Bitcoin SHA256 Benchmark V1..V5 + SIMD Scoreboard",
+        "Bitcoin SHA256 Benchmark V1..V14 + SIMD Scoreboard",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
