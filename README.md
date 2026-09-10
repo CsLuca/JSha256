@@ -61,6 +61,12 @@ g++ -std=c++17 -O3 -mavx2 -msha -municode btc_sha_bench_gui.cpp -o btc_sha_bench
 ./btc_sha_bench_gui.exe
 ```
 
+Self-test mode (no GUI, exit code based):
+
+```bash
+./btc_sha_bench_gui.exe --selftest
+```
+
 Then click `Run Benchmark V1..V14`.
 
 ## Example Scoreboard

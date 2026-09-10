@@ -1,0 +1,33 @@
+name: windows-build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build executable
+        shell: pwsh
+        run: |
+          g++ -std=c++17 -O3 -mavx2 -msha btc_sha_bench_gui.cpp -o btc_sha_bench_gui.exe -lgdi32 -luser32
+
+      - name: Run self-test
+        shell: pwsh
+        run: |
+          ./btc_sha_bench_gui.exe --selftest
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: btc-sha-bench-gui
+          path: |
+            btc_sha_bench_gui.exe
+            README.md
+            README_btc_sha_bench_gui.md

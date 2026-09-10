@@ -47,6 +47,12 @@ If your toolchain does not need `-municode`, remove it.
 
 Start `btc_sha_bench_gui.exe`, then click `Run Benchmark V1..V14`.
 
+Headless self-test mode (for CI):
+
+```bat
+btc_sha_bench_gui.exe --selftest
+```
+
 The GUI prints:
 
 - detected SIMD features,
