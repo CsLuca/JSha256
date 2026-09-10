@@ -10,6 +10,7 @@
 #include <immintrin.h>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined(__AVX2__) || defined(_M_AVX2)
@@ -222,7 +223,10 @@ enum class Version {
     V2 = 2,
     V3 = 3,
     V4 = 4,
-    V5 = 5
+    V5 = 5,
+    V6 = 6,
+    V7 = 7,
+    V8 = 8
 };
 
 static void hash_v1_to_v4(const uint8_t header[80], const Midstate& mid, uint32_t nonce, Version version, uint8_t out32[32]) {
@@ -415,6 +419,9 @@ static const char* version_name(Version v) {
         case Version::V3: return "V3";
         case Version::V4: return "V4";
         case Version::V5: return "V5";
+        case Version::V6: return "V6";
+        case Version::V7: return "V7";
+        case Version::V8: return "V8";
         default: return "?";
     }
 }
@@ -683,6 +690,26 @@ static void hash_v4_shani(const uint8_t header[80], const Midstate& mid, uint32_
     }
     sha256_32bytes_shani(digest1, out32);
 }
+
+static void hash_v7_shani_full(const uint8_t header[80], const Midstate& mid, uint32_t nonce, uint8_t out32[32]) {
+    uint32_t state[8]{};
+    std::memcpy(state, mid.h, sizeof(state));
+
+    uint8_t block1[64]{};
+    std::memcpy(block1, header + 64, 16);
+    store_be(block1 + 12, nonce);
+    block1[16] = 0x80;
+    block1[62] = 0x02;
+    block1[63] = 0x80;
+
+    sha256_compress_block_shani(state, block1);
+
+    uint8_t digest1[32]{};
+    for (int i = 0; i < 8; ++i) {
+        store_be(digest1 + i * 4, state[i]);
+    }
+    sha256_32bytes_shani(digest1, out32);
+}
 #endif
 
 static void init_example_header(uint8_t header[80]) {
@@ -815,6 +842,90 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
         out.push_back(br);
     }
 
+    {
+        const CpuInfo cpu = detect_cpu_info();
+        const unsigned int threads = std::max(1u, std::min(cpu.logical_cores, 32u));
+        auto tr = timed_run([&]() {
+            std::vector<std::thread> workers;
+            std::vector<uint8_t> local_sinks(threads, 0);
+            workers.reserve(threads);
+
+            const uint32_t chunk = ITER / threads;
+            uint32_t start = 0;
+            for (unsigned int t = 0; t < threads; ++t) {
+                const uint32_t extra = (t < (ITER % threads)) ? 1u : 0u;
+                const uint32_t begin = start;
+                const uint32_t end = begin + chunk + extra;
+                start = end;
+
+                workers.emplace_back([&, t, begin, end]() {
+                    uint8_t local[32]{};
+                    for (uint32_t n = begin; n < end; ++n) {
+                        hash_v1_to_v4(header, mid, n, Version::V4, local);
+                    }
+                    local_sinks[t] = local[0];
+                });
+            }
+
+            for (auto& th : workers) {
+                th.join();
+            }
+            for (uint8_t v : local_sinks) {
+                sink[0] ^= v;
+            }
+        });
+
+        BenchmarkResult br{};
+        br.simd = "SCALAR";
+        br.version = version_name(Version::V6);
+        br.backend = "mt-v4";
+        br.lanes = static_cast<int>(threads);
+        br.hashes_per_sec = static_cast<double>(ITER) / tr.seconds;
+        br.cycles_per_hash = static_cast<double>(tr.cycles) / static_cast<double>(ITER);
+        out.push_back(br);
+    }
+
+#if HAVE_SHA_INTRIN
+    if (simd.sha) {
+        auto tr = timed_run([&]() {
+            for (uint32_t n = 0; n < ITER; ++n) {
+                hash_v7_shani_full(header, mid, n, sink);
+            }
+        });
+        BenchmarkResult br{};
+        br.simd = "SHA-NI";
+        br.version = version_name(Version::V7);
+        br.backend = "sha-ni-full";
+        br.lanes = 1;
+        br.hashes_per_sec = static_cast<double>(ITER) / tr.seconds;
+        br.cycles_per_hash = static_cast<double>(tr.cycles) / static_cast<double>(ITER);
+        out.push_back(br);
+    }
+#endif
+
+#if HAVE_AVX2_INTRIN
+    if (simd.avx2) {
+        auto tr = timed_run([&]() {
+            uint32_t nonce = 0;
+            for (; nonce + 16 <= ITER; nonce += 16) {
+                hash_v5_avx2_batch8(header, mid, nonce, sink);
+                hash_v5_avx2_batch8(header, mid, nonce + 8, sink);
+            }
+            for (; nonce < ITER; ++nonce) {
+                hash_v1_to_v4(header, mid, nonce, Version::V4, sink);
+            }
+        });
+        BenchmarkResult br{};
+        br.simd = "AVX2";
+        br.version = version_name(Version::V8);
+        br.backend = "avx2-2x8-pipeline";
+        br.lanes = 16;
+        br.hashes_per_sec = static_cast<double>(ITER) / tr.seconds;
+        br.cycles_per_hash = static_cast<double>(tr.cycles) / static_cast<double>(ITER);
+        out.push_back(br);
+    }
+#endif
+
     sink[0] ^= 1;
     return out;
 }
@@ -880,7 +991,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             CreateWindowExA(
                 0,
                 "BUTTON",
-                "Run Benchmark V1..V5",
+                "Run Benchmark V1..V8",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                 12,
                 12,
@@ -894,7 +1005,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_output = CreateWindowExA(
                 WS_EX_CLIENTEDGE,
                 "EDIT",
-                "Click 'Run Benchmark V1..V5' to start.",
+                "Click 'Run Benchmark V1..V8' to start.",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
                 12,
                 56,
