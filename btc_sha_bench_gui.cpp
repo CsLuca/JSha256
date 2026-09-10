@@ -4,13 +4,19 @@
 
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <immintrin.h>
+#include <limits>
+#include <map>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <ctime>
 #include <vector>
 
 #if defined(__AVX2__) || defined(_M_AVX2)
@@ -391,6 +397,10 @@ struct BenchmarkResult {
     int lanes = 1;
     double hashes_per_sec = 0.0;
     double cycles_per_hash = 0.0;
+    double std_hashes_per_sec = 0.0;
+    double std_cycles_per_hash = 0.0;
+    double min_hashes_per_sec = 0.0;
+    double max_hashes_per_sec = 0.0;
 };
 
 struct TimerResult {
@@ -407,6 +417,82 @@ static std::string hex32(const uint8_t in[32]) {
         out[2 * i + 1] = h[in[i] & 0x0f];
     }
     return out;
+}
+
+static std::string csv_escape(const std::string& s) {
+    bool needs_quotes = false;
+    for (char c : s) {
+        if (c == ',' || c == '"' || c == '\n' || c == '\r') {
+            needs_quotes = true;
+            break;
+        }
+    }
+    if (!needs_quotes) {
+        return s;
+    }
+    std::string out = "\"";
+    for (char c : s) {
+        if (c == '"') {
+            out += "\"\"";
+        } else {
+            out.push_back(c);
+        }
+    }
+    out += "\"";
+    return out;
+}
+
+static std::string json_escape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 16);
+    for (char c : s) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default: out.push_back(c); break;
+        }
+    }
+    return out;
+}
+
+template <typename T>
+static double mean_of(const std::vector<T>& v) {
+    if (v.empty()) return 0.0;
+    double s = 0.0;
+    for (auto x : v) s += static_cast<double>(x);
+    return s / static_cast<double>(v.size());
+}
+
+template <typename T>
+static double stddev_of(const std::vector<T>& v, double mean) {
+    if (v.size() < 2) return 0.0;
+    double acc = 0.0;
+    for (auto x : v) {
+        const double d = static_cast<double>(x) - mean;
+        acc += d * d;
+    }
+    return std::sqrt(acc / static_cast<double>(v.size() - 1));
+}
+
+static void set_process_benchmark_mode() {
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+}
+
+static std::string now_stamp() {
+    std::time_t t = std::time(nullptr);
+    std::tm tmv{};
+#if defined(_WIN32)
+    localtime_s(&tmv, &t);
+#else
+    tmv = *std::localtime(&t);
+#endif
+    char buf[32]{};
+    std::strftime(buf, sizeof(buf), "%Y%m%d-%H%M%S", &tmv);
+    return std::string(buf);
 }
 
 template <typename F>
@@ -841,9 +927,32 @@ static ValidationReport run_correctness_tests() {
     return rep;
 }
 
-static std::vector<BenchmarkResult> run_all_benchmarks() {
+struct BenchContext {
+    uint8_t header[80]{};
+    Midstate mid{};
+    uint8_t* sink = nullptr;
+    uint32_t iter = 0;
+    SimdInfo simd{};
+    CpuInfo cpu{};
+};
+
+static void bench_row_key(const BenchmarkResult& r, std::string& key) {
+    key = r.simd + "|" + r.version + "|" + r.backend + "|" + std::to_string(r.lanes);
+}
+
+static void append_row(std::vector<BenchmarkResult>& out, const char* simd, const char* ver, const char* backend, int lanes, const TimerResult& tr, uint32_t iter) {
+    BenchmarkResult br{};
+    br.simd = simd;
+    br.version = ver;
+    br.backend = backend;
+    br.lanes = lanes;
+    br.hashes_per_sec = static_cast<double>(iter) / tr.seconds;
+    br.cycles_per_hash = static_cast<double>(tr.cycles) / static_cast<double>(iter);
+    out.push_back(br);
+}
+
+static std::vector<BenchmarkResult> run_all_benchmarks_once(const BenchContext& ctx) {
     std::vector<BenchmarkResult> out;
-    const SimdInfo simd = detect_simd();
 
     struct SimdTier {
         const char* name;
@@ -853,20 +962,13 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
 
     const std::vector<SimdTier> tiers = {
         {"SCALAR", true, 1},
-        {"SSE2", simd.sse2, 4},
-        {"SSE4.1", simd.sse41, 4},
-        {"AVX", simd.avx, 8},
-        {"AVX2", simd.avx2, 8},
-        {"AVX512F", simd.avx512f, 16},
-        {"SHA-NI", simd.sha, 4}
+        {"SSE2", ctx.simd.sse2, 4},
+        {"SSE4.1", ctx.simd.sse41, 4},
+        {"AVX", ctx.simd.avx, 8},
+        {"AVX2", ctx.simd.avx2, 8},
+        {"AVX512F", ctx.simd.avx512f, 16},
+        {"SHA-NI", ctx.simd.sha, 4}
     };
-
-    uint8_t header[80]{};
-    init_example_header(header);
-    const Midstate mid = make_midstate(header);
-
-    constexpr uint32_t ITER = 120000;
-    uint8_t sink[32]{};
 
     for (const auto& tier : tiers) {
         if (!tier.enabled) {
@@ -877,74 +979,66 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
 
         for (Version v : {Version::V1, Version::V2, Version::V3, Version::V4}) {
             auto tr = timed_run([&]() {
-                for (uint32_t i = 0; i < ITER; ++i) {
+                for (uint32_t i = 0; i < ctx.iter; ++i) {
                     if (is_sha_tier && v == Version::V4) {
 #if HAVE_SHA_INTRIN
-                        hash_v4_shani(header, mid, i, sink);
+                        hash_v4_shani(ctx.header, ctx.mid, i, ctx.sink);
 #else
-                        hash_v1_to_v4(header, mid, i, v, sink);
+                        hash_v1_to_v4(ctx.header, ctx.mid, i, v, ctx.sink);
 #endif
                     } else {
-                        hash_v1_to_v4(header, mid, i, v, sink);
+                        hash_v1_to_v4(ctx.header, ctx.mid, i, v, ctx.sink);
                     }
                 }
             });
-            BenchmarkResult br{};
-            br.simd = tier.name;
-            br.version = version_name(v);
+
+            const char* backend = "scalar-core";
             if (is_sha_tier && v == Version::V4) {
-                br.backend = HAVE_SHA_INTRIN ? "sha-ni-real" : "sha-fallback";
-            } else {
-                br.backend = "scalar-core";
+                backend = HAVE_SHA_INTRIN ? "sha-ni-real" : "sha-fallback";
             }
-            br.lanes = 1;
-            br.hashes_per_sec = static_cast<double>(ITER) / tr.seconds;
-            br.cycles_per_hash = static_cast<double>(tr.cycles) / static_cast<double>(ITER);
-            out.push_back(br);
+            append_row(out, tier.name, version_name(v), backend, 1, tr, ctx.iter);
         }
 
         auto tr = timed_run([&]() {
             uint32_t nonce = 0;
 #if HAVE_AVX2_INTRIN
             if (std::strcmp(tier.name, "AVX2") == 0) {
-                for (uint32_t i = 0; i + 8 <= ITER; i += 8) {
-                    hash_v5_avx2_batch8(header, mid, nonce, sink);
+                for (uint32_t i = 0; i + 8 <= ctx.iter; i += 8) {
+                    hash_v5_avx2_batch8(ctx.header, ctx.mid, nonce, ctx.sink);
                     nonce += 8;
                 }
-                for (; nonce < ITER; ++nonce) {
+                for (; nonce < ctx.iter; ++nonce) {
                     if (is_sha_tier) {
 #if HAVE_SHA_INTRIN
-                        hash_v4_shani(header, mid, nonce, sink);
+                        hash_v4_shani(ctx.header, ctx.mid, nonce, ctx.sink);
 #else
-                        hash_v1_to_v4(header, mid, nonce, Version::V4, sink);
+                        hash_v1_to_v4(ctx.header, ctx.mid, nonce, Version::V4, ctx.sink);
 #endif
                     } else {
-                        hash_v1_to_v4(header, mid, nonce, Version::V4, sink);
+                        hash_v1_to_v4(ctx.header, ctx.mid, nonce, Version::V4, ctx.sink);
                     }
                 }
                 return;
             }
 #endif
-            for (uint32_t i = 0; i < ITER; i += static_cast<uint32_t>(tier.lanes)) {
+            for (uint32_t i = 0; i < ctx.iter; i += static_cast<uint32_t>(tier.lanes)) {
                 for (int lane = 0; lane < tier.lanes; ++lane) {
                     const uint32_t n = nonce + static_cast<uint32_t>(lane);
                     if (is_sha_tier) {
 #if HAVE_SHA_INTRIN
-                        hash_v4_shani(header, mid, n, sink);
+                        hash_v4_shani(ctx.header, ctx.mid, n, ctx.sink);
 #else
-                        hash_v1_to_v4(header, mid, n, Version::V4, sink);
+                        hash_v1_to_v4(ctx.header, ctx.mid, n, Version::V4, ctx.sink);
 #endif
                     } else {
-                        hash_v1_to_v4(header, mid, n, Version::V4, sink);
+                        hash_v1_to_v4(ctx.header, ctx.mid, n, Version::V4, ctx.sink);
                     }
                 }
                 nonce += static_cast<uint32_t>(tier.lanes);
             }
         });
-        BenchmarkResult br{};
-        br.simd = tier.name;
-        br.version = version_name(Version::V5);
-        br.backend =
+
+        const char* backend =
 #if HAVE_SHA_INTRIN
             is_sha_tier ? "sha-ni-real" :
 #endif
@@ -953,24 +1047,21 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
 #else
             "lane-model";
 #endif
-        br.lanes = tier.lanes;
-        br.hashes_per_sec = static_cast<double>(ITER) / tr.seconds;
-        br.cycles_per_hash = static_cast<double>(tr.cycles) / static_cast<double>(ITER);
-        out.push_back(br);
+
+        append_row(out, tier.name, version_name(Version::V5), backend, tier.lanes, tr, ctx.iter);
     }
 
     {
-        const CpuInfo cpu = detect_cpu_info();
-        const unsigned int threads = std::max(1u, std::min(cpu.logical_cores, 32u));
+        const unsigned int threads = std::max(1u, std::min(ctx.cpu.logical_cores, 32u));
         auto tr = timed_run([&]() {
             std::vector<std::thread> workers;
             std::vector<uint8_t> local_sinks(threads, 0);
             workers.reserve(threads);
 
-            const uint32_t chunk = ITER / threads;
+            const uint32_t chunk = ctx.iter / threads;
             uint32_t start = 0;
             for (unsigned int t = 0; t < threads; ++t) {
-                const uint32_t extra = (t < (ITER % threads)) ? 1u : 0u;
+                const uint32_t extra = (t < (ctx.iter % threads)) ? 1u : 0u;
                 const uint32_t begin = start;
                 const uint32_t end = begin + chunk + extra;
                 start = end;
@@ -978,57 +1069,40 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
                 workers.emplace_back([&, t, begin, end]() {
                     uint8_t local[32]{};
                     for (uint32_t n = begin; n < end; ++n) {
-                        hash_v1_to_v4(header, mid, n, Version::V4, local);
+                        hash_v1_to_v4(ctx.header, ctx.mid, n, Version::V4, local);
                     }
                     local_sinks[t] = local[0];
                 });
             }
-
             for (auto& th : workers) {
                 th.join();
             }
             for (uint8_t v : local_sinks) {
-                sink[0] ^= v;
+                ctx.sink[0] ^= v;
             }
         });
-
-        BenchmarkResult br{};
-        br.simd = "SCALAR";
-        br.version = version_name(Version::V6);
-        br.backend = "mt-v4";
-        br.lanes = static_cast<int>(threads);
-        br.hashes_per_sec = static_cast<double>(ITER) / tr.seconds;
-        br.cycles_per_hash = static_cast<double>(tr.cycles) / static_cast<double>(ITER);
-        out.push_back(br);
+        append_row(out, "SCALAR", version_name(Version::V6), "mt-v4", static_cast<int>(threads), tr, ctx.iter);
     }
 
 #if HAVE_SHA_INTRIN
-    if (simd.sha) {
-        auto tr = timed_run([&]() {
-            for (uint32_t n = 0; n < ITER; ++n) {
-                hash_v7_shani_full(header, mid, n, sink);
+    if (ctx.simd.sha) {
+        auto tr7 = timed_run([&]() {
+            for (uint32_t n = 0; n < ctx.iter; ++n) {
+                hash_v7_shani_full(ctx.header, ctx.mid, n, ctx.sink);
             }
         });
-        BenchmarkResult br{};
-        br.simd = "SHA-NI";
-        br.version = version_name(Version::V7);
-        br.backend = "sha-ni-full";
-        br.lanes = 1;
-        br.hashes_per_sec = static_cast<double>(ITER) / tr.seconds;
-        br.cycles_per_hash = static_cast<double>(tr.cycles) / static_cast<double>(ITER);
-        out.push_back(br);
+        append_row(out, "SHA-NI", version_name(Version::V7), "sha-ni-full", 1, tr7, ctx.iter);
 
-        const CpuInfo cpu = detect_cpu_info();
-        const unsigned int threads = std::max(1u, std::min(cpu.logical_cores, 32u));
-        auto tr_v10 = timed_run([&]() {
+        const unsigned int threads = std::max(1u, std::min(ctx.cpu.logical_cores, 32u));
+        auto tr10 = timed_run([&]() {
             std::vector<std::thread> workers;
             std::vector<uint8_t> local_sinks(threads, 0);
             workers.reserve(threads);
 
-            const uint32_t chunk = ITER / threads;
+            const uint32_t chunk = ctx.iter / threads;
             uint32_t start = 0;
             for (unsigned int t = 0; t < threads; ++t) {
-                const uint32_t extra = (t < (ITER % threads)) ? 1u : 0u;
+                const uint32_t extra = (t < (ctx.iter % threads)) ? 1u : 0u;
                 const uint32_t begin = start;
                 const uint32_t end = begin + chunk + extra;
                 start = end;
@@ -1036,226 +1110,221 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
                 workers.emplace_back([&, t, begin, end]() {
                     uint8_t local[32]{};
                     for (uint32_t n = begin; n < end; ++n) {
-                        hash_v7_shani_full(header, mid, n, local);
+                        hash_v7_shani_full(ctx.header, ctx.mid, n, local);
                     }
                     local_sinks[t] = local[0];
                 });
             }
+            for (auto& th : workers) th.join();
+            for (uint8_t v : local_sinks) ctx.sink[0] ^= v;
+        });
+        append_row(out, "SHA-NI", version_name(Version::V10), "mt-sha-ni-full", static_cast<int>(threads), tr10, ctx.iter);
 
-            for (auto& th : workers) {
-                th.join();
-            }
-            for (uint8_t v : local_sinks) {
-                sink[0] ^= v;
+        auto tr11 = timed_run([&]() {
+            for (uint32_t n = 0; n < ctx.iter; ++n) {
+                hash_v11_shani_first_scalar_second(ctx.header, ctx.mid, n, ctx.sink);
             }
         });
-        BenchmarkResult br_v10{};
-        br_v10.simd = "SHA-NI";
-        br_v10.version = version_name(Version::V10);
-        br_v10.backend = "mt-sha-ni-full";
-        br_v10.lanes = static_cast<int>(threads);
-        br_v10.hashes_per_sec = static_cast<double>(ITER) / tr_v10.seconds;
-        br_v10.cycles_per_hash = static_cast<double>(tr_v10.cycles) / static_cast<double>(ITER);
-        out.push_back(br_v10);
-
-        auto tr_v11 = timed_run([&]() {
-            for (uint32_t n = 0; n < ITER; ++n) {
-                hash_v11_shani_first_scalar_second(header, mid, n, sink);
-            }
-        });
-        BenchmarkResult br_v11{};
-        br_v11.simd = "SHA-NI";
-        br_v11.version = version_name(Version::V11);
-        br_v11.backend = "sha1-shani+sha2-scalar";
-        br_v11.lanes = 1;
-        br_v11.hashes_per_sec = static_cast<double>(ITER) / tr_v11.seconds;
-        br_v11.cycles_per_hash = static_cast<double>(tr_v11.cycles) / static_cast<double>(ITER);
-        out.push_back(br_v11);
+        append_row(out, "SHA-NI", version_name(Version::V11), "sha1-shani+sha2-scalar", 1, tr11, ctx.iter);
     }
 #endif
 
 #if HAVE_AVX2_INTRIN
-    if (simd.avx2) {
-        auto tr = timed_run([&]() {
+    if (ctx.simd.avx2) {
+        auto tr8 = timed_run([&]() {
             uint32_t nonce = 0;
-            for (; nonce + 16 <= ITER; nonce += 16) {
-                hash_v5_avx2_batch8(header, mid, nonce, sink);
-                hash_v5_avx2_batch8(header, mid, nonce + 8, sink);
+            for (; nonce + 16 <= ctx.iter; nonce += 16) {
+                hash_v5_avx2_batch8(ctx.header, ctx.mid, nonce, ctx.sink);
+                hash_v5_avx2_batch8(ctx.header, ctx.mid, nonce + 8, ctx.sink);
             }
-            for (; nonce < ITER; ++nonce) {
-                hash_v1_to_v4(header, mid, nonce, Version::V4, sink);
+            for (; nonce < ctx.iter; ++nonce) {
+                hash_v1_to_v4(ctx.header, ctx.mid, nonce, Version::V4, ctx.sink);
             }
         });
-        BenchmarkResult br{};
-        br.simd = "AVX2";
-        br.version = version_name(Version::V8);
-        br.backend = "avx2-2x8-pipeline";
-        br.lanes = 16;
-        br.hashes_per_sec = static_cast<double>(ITER) / tr.seconds;
-        br.cycles_per_hash = static_cast<double>(tr.cycles) / static_cast<double>(ITER);
-        out.push_back(br);
+        append_row(out, "AVX2", version_name(Version::V8), "avx2-2x8-pipeline", 16, tr8, ctx.iter);
 
-        const CpuInfo cpu = detect_cpu_info();
-        const unsigned int threads = std::max(1u, std::min(cpu.logical_cores, 32u));
-        auto tr_v9 = timed_run([&]() {
+        const unsigned int threads = std::max(1u, std::min(ctx.cpu.logical_cores, 32u));
+        auto tr9 = timed_run([&]() {
             std::vector<std::thread> workers;
             std::vector<uint8_t> local_sinks(threads, 0);
             workers.reserve(threads);
-
-            const uint32_t chunk = ITER / threads;
+            const uint32_t chunk = ctx.iter / threads;
             uint32_t start = 0;
             for (unsigned int t = 0; t < threads; ++t) {
-                const uint32_t extra = (t < (ITER % threads)) ? 1u : 0u;
+                const uint32_t extra = (t < (ctx.iter % threads)) ? 1u : 0u;
                 const uint32_t begin = start;
                 const uint32_t end = begin + chunk + extra;
                 start = end;
-
                 workers.emplace_back([&, t, begin, end]() {
                     uint8_t local[32]{};
                     uint32_t n = begin;
                     for (; n + 16 <= end; n += 16) {
-                        hash_v5_avx2_batch8(header, mid, n, local);
-                        hash_v5_avx2_batch8(header, mid, n + 8, local);
+                        hash_v5_avx2_batch8(ctx.header, ctx.mid, n, local);
+                        hash_v5_avx2_batch8(ctx.header, ctx.mid, n + 8, local);
                     }
                     for (; n < end; ++n) {
-                        hash_v1_to_v4(header, mid, n, Version::V4, local);
+                        hash_v1_to_v4(ctx.header, ctx.mid, n, Version::V4, local);
                     }
                     local_sinks[t] = local[0];
                 });
             }
-
-            for (auto& th : workers) {
-                th.join();
-            }
-            for (uint8_t v : local_sinks) {
-                sink[0] ^= v;
-            }
+            for (auto& th : workers) th.join();
+            for (uint8_t v : local_sinks) ctx.sink[0] ^= v;
         });
-        BenchmarkResult br_v9{};
-        br_v9.simd = "AVX2";
-        br_v9.version = version_name(Version::V9);
-        br_v9.backend = "mt-avx2-pipeline";
-        br_v9.lanes = static_cast<int>(threads) * 16;
-        br_v9.hashes_per_sec = static_cast<double>(ITER) / tr_v9.seconds;
-        br_v9.cycles_per_hash = static_cast<double>(tr_v9.cycles) / static_cast<double>(ITER);
-        out.push_back(br_v9);
+        append_row(out, "AVX2", version_name(Version::V9), "mt-avx2-pipeline", static_cast<int>(threads) * 16, tr9, ctx.iter);
 
 #if HAVE_SHA_INTRIN
-        if (simd.sha) {
-            auto tr_v12 = timed_run([&]() {
+        if (ctx.simd.sha) {
+            auto tr12 = timed_run([&]() {
                 uint32_t nonce = 0;
-                for (; nonce + 8 <= ITER; nonce += 8) {
-                    hash_v5_avx2_batch8(header, mid, nonce, sink);
+                for (; nonce + 8 <= ctx.iter; nonce += 8) {
+                    hash_v5_avx2_batch8(ctx.header, ctx.mid, nonce, ctx.sink);
                 }
-                for (; nonce < ITER; ++nonce) {
-                    hash_v7_shani_full(header, mid, nonce, sink);
+                for (; nonce < ctx.iter; ++nonce) {
+                    hash_v7_shani_full(ctx.header, ctx.mid, nonce, ctx.sink);
                 }
             });
-            BenchmarkResult br_v12{};
-            br_v12.simd = "AVX2+SHA";
-            br_v12.version = version_name(Version::V12);
-            br_v12.backend = "avx2-batch+sha-tail";
-            br_v12.lanes = 8;
-            br_v12.hashes_per_sec = static_cast<double>(ITER) / tr_v12.seconds;
-            br_v12.cycles_per_hash = static_cast<double>(tr_v12.cycles) / static_cast<double>(ITER);
-            out.push_back(br_v12);
+            append_row(out, "AVX2+SHA", version_name(Version::V12), "avx2-batch+sha-tail", 8, tr12, ctx.iter);
 
-            const CpuInfo cpu = detect_cpu_info();
-            const unsigned int threads = std::max(1u, std::min(cpu.logical_cores, 32u));
-
-            auto tr_v13 = timed_run([&]() {
+            auto tr13 = timed_run([&]() {
                 std::vector<std::thread> workers;
                 std::vector<uint8_t> local_sinks(threads, 0);
                 workers.reserve(threads);
-
-                const uint32_t chunk = ITER / threads;
+                const uint32_t chunk = ctx.iter / threads;
                 uint32_t start = 0;
                 for (unsigned int t = 0; t < threads; ++t) {
-                    const uint32_t extra = (t < (ITER % threads)) ? 1u : 0u;
+                    const uint32_t extra = (t < (ctx.iter % threads)) ? 1u : 0u;
                     const uint32_t begin = start;
                     const uint32_t end = begin + chunk + extra;
                     start = end;
-
                     workers.emplace_back([&, t, begin, end]() {
                         uint8_t local[32]{};
                         uint32_t n = begin;
                         for (; n + 8 <= end; n += 8) {
-                            hash_v5_avx2_batch8(header, mid, n, local);
+                            hash_v5_avx2_batch8(ctx.header, ctx.mid, n, local);
                         }
                         for (; n < end; ++n) {
-                            hash_v7_shani_full(header, mid, n, local);
+                            hash_v7_shani_full(ctx.header, ctx.mid, n, local);
                         }
                         local_sinks[t] = local[0];
                     });
                 }
-
-                for (auto& th : workers) {
-                    th.join();
-                }
-                for (uint8_t v : local_sinks) {
-                    sink[0] ^= v;
-                }
+                for (auto& th : workers) th.join();
+                for (uint8_t v : local_sinks) ctx.sink[0] ^= v;
             });
+            append_row(out, "AVX2+SHA", version_name(Version::V13), "mt-avx2+sha-tail", static_cast<int>(threads) * 8, tr13, ctx.iter);
 
-            BenchmarkResult br_v13{};
-            br_v13.simd = "AVX2+SHA";
-            br_v13.version = version_name(Version::V13);
-            br_v13.backend = "mt-avx2+sha-tail";
-            br_v13.lanes = static_cast<int>(threads) * 8;
-            br_v13.hashes_per_sec = static_cast<double>(ITER) / tr_v13.seconds;
-            br_v13.cycles_per_hash = static_cast<double>(tr_v13.cycles) / static_cast<double>(ITER);
-            out.push_back(br_v13);
-
-            auto tr_v14 = timed_run([&]() {
+            auto tr14 = timed_run([&]() {
                 std::vector<std::thread> workers;
                 std::vector<uint8_t> local_sinks(threads, 0);
                 workers.reserve(threads);
-
-                const uint32_t chunk = ITER / threads;
+                const uint32_t chunk = ctx.iter / threads;
                 uint32_t start = 0;
                 for (unsigned int t = 0; t < threads; ++t) {
-                    const uint32_t extra = (t < (ITER % threads)) ? 1u : 0u;
+                    const uint32_t extra = (t < (ctx.iter % threads)) ? 1u : 0u;
                     const uint32_t begin = start;
                     const uint32_t end = begin + chunk + extra;
                     start = end;
-
                     workers.emplace_back([&, t, begin, end]() {
                         uint8_t local[32]{};
                         uint32_t n = begin;
                         for (; n + 16 <= end; n += 16) {
-                            hash_v5_avx2_batch8(header, mid, n, local);
-                            hash_v5_avx2_batch8(header, mid, n + 8, local);
+                            hash_v5_avx2_batch8(ctx.header, ctx.mid, n, local);
+                            hash_v5_avx2_batch8(ctx.header, ctx.mid, n + 8, local);
                         }
                         for (; n + 8 <= end; n += 8) {
-                            hash_v5_avx2_batch8(header, mid, n, local);
+                            hash_v5_avx2_batch8(ctx.header, ctx.mid, n, local);
                         }
                         for (; n < end; ++n) {
-                            hash_v7_shani_full(header, mid, n, local);
+                            hash_v7_shani_full(ctx.header, ctx.mid, n, local);
                         }
                         local_sinks[t] = local[0];
                     });
                 }
-
-                for (auto& th : workers) {
-                    th.join();
-                }
-                for (uint8_t v : local_sinks) {
-                    sink[0] ^= v;
-                }
+                for (auto& th : workers) th.join();
+                for (uint8_t v : local_sinks) ctx.sink[0] ^= v;
             });
-
-            BenchmarkResult br_v14{};
-            br_v14.simd = "AVX2+SHA";
-            br_v14.version = version_name(Version::V14);
-            br_v14.backend = "mt-avx2-2x8+sha";
-            br_v14.lanes = static_cast<int>(threads) * 16;
-            br_v14.hashes_per_sec = static_cast<double>(ITER) / tr_v14.seconds;
-            br_v14.cycles_per_hash = static_cast<double>(tr_v14.cycles) / static_cast<double>(ITER);
-            out.push_back(br_v14);
+            append_row(out, "AVX2+SHA", version_name(Version::V14), "mt-avx2-2x8+sha", static_cast<int>(threads) * 16, tr14, ctx.iter);
         }
 #endif
     }
 #endif
+
+    return out;
+}
+
+static std::vector<BenchmarkResult> run_all_benchmarks() {
+    set_process_benchmark_mode();
+
+    const SimdInfo simd = detect_simd();
+    const CpuInfo cpu = detect_cpu_info();
+
+    uint8_t header[80]{};
+    init_example_header(header);
+    const Midstate mid = make_midstate(header);
+
+    constexpr uint32_t WARMUP_ITER = 20000;
+    constexpr uint32_t ITER = 120000;
+    constexpr int RUNS = 3;
+
+    uint8_t sink[32]{};
+
+    BenchContext warm{};
+    std::memcpy(warm.header, header, 80);
+    warm.mid = mid;
+    warm.sink = sink;
+    warm.iter = WARMUP_ITER;
+    warm.simd = simd;
+    warm.cpu = cpu;
+    (void)run_all_benchmarks_once(warm);
+
+    std::map<std::string, std::vector<BenchmarkResult>> grouped;
+    for (int r = 0; r < RUNS; ++r) {
+        BenchContext ctx{};
+        std::memcpy(ctx.header, header, 80);
+        ctx.mid = mid;
+        ctx.sink = sink;
+        ctx.iter = ITER;
+        ctx.simd = simd;
+        ctx.cpu = cpu;
+
+        auto rows = run_all_benchmarks_once(ctx);
+        for (const auto& row : rows) {
+            std::string key;
+            bench_row_key(row, key);
+            grouped[key].push_back(row);
+        }
+    }
+
+    std::vector<BenchmarkResult> out;
+    out.reserve(grouped.size());
+    for (const auto& kv : grouped) {
+        const auto& runs = kv.second;
+        if (runs.empty()) continue;
+
+        BenchmarkResult br = runs.front();
+        std::vector<double> hs;
+        std::vector<double> ch;
+        hs.reserve(runs.size());
+        ch.reserve(runs.size());
+
+        double min_h = std::numeric_limits<double>::max();
+        double max_h = 0.0;
+        for (const auto& x : runs) {
+            hs.push_back(x.hashes_per_sec);
+            ch.push_back(x.cycles_per_hash);
+            min_h = std::min(min_h, x.hashes_per_sec);
+            max_h = std::max(max_h, x.hashes_per_sec);
+        }
+
+        br.hashes_per_sec = mean_of(hs);
+        br.cycles_per_hash = mean_of(ch);
+        br.std_hashes_per_sec = stddev_of(hs, br.hashes_per_sec);
+        br.std_cycles_per_hash = stddev_of(ch, br.cycles_per_hash);
+        br.min_hashes_per_sec = min_h;
+        br.max_hashes_per_sec = max_h;
+        out.push_back(br);
+    }
 
     sink[0] ^= 1;
     return out;
@@ -1294,19 +1363,78 @@ static std::string format_results(const std::vector<BenchmarkResult>& rows, cons
         << std::setw(17) << "Backend"
         << std::setw(8) << "Lanes"
         << std::setw(16) << "Hash/s"
+        << std::setw(12) << "Std H/s"
         << std::setw(14) << "Cycles/hash"
+        << std::setw(12) << "Std Cyc"
         << "\r\n";
-    oss << "-----------------------------------------------------------------------\r\n";
+    oss << "-------------------------------------------------------------------------------------------\r\n";
     for (const auto& r : sorted) {
         oss << std::left << std::setw(10) << r.simd
             << std::setw(6) << r.version
             << std::setw(17) << r.backend
             << std::setw(8) << r.lanes
             << std::setw(16) << std::fixed << std::setprecision(2) << r.hashes_per_sec
+            << std::setw(12) << std::fixed << std::setprecision(2) << r.std_hashes_per_sec
             << std::setw(14) << std::fixed << std::setprecision(2) << r.cycles_per_hash
+            << std::setw(12) << std::fixed << std::setprecision(2) << r.std_cycles_per_hash
             << "\r\n";
     }
     return oss.str();
+}
+
+static void export_results_files(const std::vector<BenchmarkResult>& rows, const ValidationReport& validation) {
+    namespace fs = std::filesystem;
+    const fs::path outdir = fs::path("benchmark-output");
+    std::error_code ec;
+    fs::create_directories(outdir, ec);
+
+    const std::string stamp = now_stamp();
+    const fs::path csv_path = outdir / ("results-" + stamp + ".csv");
+    const fs::path json_path = outdir / ("results-" + stamp + ".json");
+
+    std::ofstream csv(csv_path.string(), std::ios::binary);
+    if (csv) {
+        csv << "simd,version,backend,lanes,hashes_per_sec,std_hashes_per_sec,min_hashes_per_sec,max_hashes_per_sec,cycles_per_hash,std_cycles_per_hash\n";
+        for (const auto& r : rows) {
+            csv
+                << csv_escape(r.simd) << ","
+                << csv_escape(r.version) << ","
+                << csv_escape(r.backend) << ","
+                << r.lanes << ","
+                << std::fixed << std::setprecision(6) << r.hashes_per_sec << ","
+                << std::fixed << std::setprecision(6) << r.std_hashes_per_sec << ","
+                << std::fixed << std::setprecision(6) << r.min_hashes_per_sec << ","
+                << std::fixed << std::setprecision(6) << r.max_hashes_per_sec << ","
+                << std::fixed << std::setprecision(6) << r.cycles_per_hash << ","
+                << std::fixed << std::setprecision(6) << r.std_cycles_per_hash << "\n";
+        }
+    }
+
+    std::ofstream json(json_path.string(), std::ios::binary);
+    if (json) {
+        json << "{\n";
+        json << "  \"timestamp\": \"" << json_escape(stamp) << "\",\n";
+        json << "  \"validation_ok\": " << (validation.ok ? "true" : "false") << ",\n";
+        json << "  \"validation_text\": \"" << json_escape(validation.text) << "\",\n";
+        json << "  \"rows\": [\n";
+        for (size_t i = 0; i < rows.size(); ++i) {
+            const auto& r = rows[i];
+            json << "    {\n";
+            json << "      \"simd\": \"" << json_escape(r.simd) << "\",\n";
+            json << "      \"version\": \"" << json_escape(r.version) << "\",\n";
+            json << "      \"backend\": \"" << json_escape(r.backend) << "\",\n";
+            json << "      \"lanes\": " << r.lanes << ",\n";
+            json << "      \"hashes_per_sec\": " << std::fixed << std::setprecision(6) << r.hashes_per_sec << ",\n";
+            json << "      \"std_hashes_per_sec\": " << std::fixed << std::setprecision(6) << r.std_hashes_per_sec << ",\n";
+            json << "      \"min_hashes_per_sec\": " << std::fixed << std::setprecision(6) << r.min_hashes_per_sec << ",\n";
+            json << "      \"max_hashes_per_sec\": " << std::fixed << std::setprecision(6) << r.max_hashes_per_sec << ",\n";
+            json << "      \"cycles_per_hash\": " << std::fixed << std::setprecision(6) << r.cycles_per_hash << ",\n";
+            json << "      \"std_cycles_per_hash\": " << std::fixed << std::setprecision(6) << r.std_cycles_per_hash << "\n";
+            json << "    }" << (i + 1 < rows.size() ? "," : "") << "\n";
+        }
+        json << "  ]\n";
+        json << "}\n";
+    }
 }
 
 } // namespace bench
@@ -1354,6 +1482,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 set_output_text("Running benchmark...\r\n");
                 auto validation = bench::run_correctness_tests();
                 auto results = bench::run_all_benchmarks();
+                bench::export_results_files(results, validation);
                 auto text = bench::format_results(results, validation);
                 set_output_text(text);
             }

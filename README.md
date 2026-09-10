@@ -13,6 +13,8 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 - `Cycles/hash`
 - backend used (`scalar-core`, `avx2-8lane-real`, `sha-ni-real`, ...)
 - built-in correctness checks (known nonces + backend cross-check)
+- repeat-run statistics (`Std H/s`, `Std Cyc`) with warmup
+- automatic export in `benchmark-output/results-*.csv` and `benchmark-output/results-*.json`
 
 ## Project Layout
 

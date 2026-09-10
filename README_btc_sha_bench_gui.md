@@ -51,7 +51,12 @@ The GUI prints:
 
 - detected SIMD features,
 - correctness report (known nonces and backend consistency checks),
-- ranked table columns: `SIMD`, `Ver`, `Backend`, `Lanes`, `Hash/s`, `Cycles/hash`.
+- ranked table columns: `SIMD`, `Ver`, `Backend`, `Lanes`, `Hash/s`, `Std H/s`, `Cycles/hash`, `Std Cyc`.
+
+After each run, results are also exported in:
+
+- `benchmark-output/results-<timestamp>.csv`
+- `benchmark-output/results-<timestamp>.json`
 
 ## Notes
 
