@@ -1,0 +1,22 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+## [1.0.0] - 2026-09-10
+
+### Added
+
+- Win32 GUI benchmark app for Bitcoin-style double-SHA256.
+- Optimization path progression from `V1` to `V14`.
+- SIMD detection (`SSE2`, `SSE4.1`, `AVX`, `AVX2`, `AVX512F`, `SHA-NI`).
+- CPU info block in GUI output (vendor, model, arch, logical cores).
+- Built-in correctness validation with known nonce vectors and backend consistency checks.
+- Repeat-run benchmark statistics with warmup (`Std H/s`, `Std Cyc`, min/max).
+- Automatic export to CSV/JSON under `benchmark-output/`.
+- Text bar chart for top-throughput rows.
+- Headless `--selftest` mode for automation.
+- GitHub Actions workflow for Windows build, self-test, and artifact upload.
+
+### Notes
+
+- This project is intended for benchmarking/education and is not a production miner.

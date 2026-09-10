@@ -1,5 +1,7 @@
 # JSha256
 
+Current release: **v1.0.0**
+
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![Language](https://img.shields.io/badge/language-C%2B%2B17-00599C)
 ![Build](https://img.shields.io/badge/build-MSYS2%20UCRT64-brightgreen)
@@ -20,6 +22,7 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 
 - `btc_sha_bench_gui.cpp` - GUI + benchmark engine
 - `README_btc_sha_bench_gui.md` - technical implementation notes
+- `CHANGELOG.md` - release notes
 
 ## Optimization Versions
 

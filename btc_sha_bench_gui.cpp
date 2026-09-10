@@ -33,6 +33,8 @@
 
 namespace bench {
 
+static constexpr const char* APP_VERSION = "v1.0.0";
+
 static inline uint32_t rotr(uint32_t x, unsigned n) {
     return (x >> n) | (x << (32 - n));
 }
@@ -1333,6 +1335,7 @@ static std::string format_cpu_features() {
     const CpuInfo cpu = detect_cpu_info();
     std::ostringstream oss;
     oss << "CPU info\r\n";
+    oss << "- App ver:  " << APP_VERSION << "\r\n";
     oss << "- Vendor:   " << (cpu.vendor.empty() ? "n/a" : cpu.vendor) << "\r\n";
     oss << "- Model:    " << (cpu.brand.empty() ? "n/a" : cpu.brand) << "\r\n";
     oss << "- Arch:     " << cpu.arch << "\r\n";
@@ -1560,7 +1563,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     HWND hwnd = CreateWindowExA(
         0,
         kClassName,
-        "Bitcoin SHA256 Benchmark V1..V14 + SIMD Scoreboard",
+        "JSha256 v1.0.0 - Benchmark V1..V14 + SIMD Scoreboard",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
