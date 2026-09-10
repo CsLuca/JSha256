@@ -5,7 +5,7 @@
 ![Build](https://img.shields.io/badge/build-MSYS2%20UCRT64-brightgreen)
 ![SIMD](https://img.shields.io/badge/SIMD-SSE2%2FSSE4.1%2FAVX%2FAVX2%2FSHA--NI-orange)
 
-Win32 GUI benchmark for Bitcoin-style `double-SHA256` optimization stages `V1..V10`.
+Win32 GUI benchmark for Bitcoin-style `double-SHA256` optimization stages `V1..V12`.
 
 It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboard with:
 
@@ -32,6 +32,8 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 | `V8` | AVX2 pipelined dual-batch mode (2x8 lanes in flight) |
 | `V9` | Hybrid multi-thread + AVX2 pipelined mode |
 | `V10` | Hybrid multi-thread + SHA-NI full mode |
+| `V11` | SHA block #2 via SHA-NI + second SHA scalar specialized |
+| `V12` | AVX2 batch path with SHA-NI assisted tail path |
 
 ## SIMD Features Reported
 
@@ -54,7 +56,7 @@ g++ -std=c++17 -O3 -mavx2 -msha -municode btc_sha_bench_gui.cpp -o btc_sha_bench
 ./btc_sha_bench_gui.exe
 ```
 
-Then click `Run Benchmark V1..V10`.
+Then click `Run Benchmark V1..V12`.
 
 ## Example Scoreboard
 

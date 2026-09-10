@@ -228,7 +228,9 @@ enum class Version {
     V7 = 7,
     V8 = 8,
     V9 = 9,
-    V10 = 10
+    V10 = 10,
+    V11 = 11,
+    V12 = 12
 };
 
 static void hash_v1_to_v4(const uint8_t header[80], const Midstate& mid, uint32_t nonce, Version version, uint8_t out32[32]) {
@@ -426,6 +428,8 @@ static const char* version_name(Version v) {
         case Version::V8: return "V8";
         case Version::V9: return "V9";
         case Version::V10: return "V10";
+        case Version::V11: return "V11";
+        case Version::V12: return "V12";
         default: return "?";
     }
 }
@@ -714,6 +718,26 @@ static void hash_v7_shani_full(const uint8_t header[80], const Midstate& mid, ui
     }
     sha256_32bytes_shani(digest1, out32);
 }
+
+static void hash_v11_shani_first_scalar_second(const uint8_t header[80], const Midstate& mid, uint32_t nonce, uint8_t out32[32]) {
+    uint32_t state[8]{};
+    std::memcpy(state, mid.h, sizeof(state));
+
+    uint8_t block1[64]{};
+    std::memcpy(block1, header + 64, 16);
+    store_be(block1 + 12, nonce);
+    block1[16] = 0x80;
+    block1[62] = 0x02;
+    block1[63] = 0x80;
+
+    sha256_compress_block_shani(state, block1);
+
+    uint8_t digest1[32]{};
+    for (int i = 0; i < 8; ++i) {
+        store_be(digest1 + i * 4, state[i]);
+    }
+    sha256_32bytes_specialized(digest1, out32, true);
+}
 #endif
 
 static void init_example_header(uint8_t header[80]) {
@@ -944,6 +968,20 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
         br_v10.hashes_per_sec = static_cast<double>(ITER) / tr_v10.seconds;
         br_v10.cycles_per_hash = static_cast<double>(tr_v10.cycles) / static_cast<double>(ITER);
         out.push_back(br_v10);
+
+        auto tr_v11 = timed_run([&]() {
+            for (uint32_t n = 0; n < ITER; ++n) {
+                hash_v11_shani_first_scalar_second(header, mid, n, sink);
+            }
+        });
+        BenchmarkResult br_v11{};
+        br_v11.simd = "SHA-NI";
+        br_v11.version = version_name(Version::V11);
+        br_v11.backend = "sha1-shani+sha2-scalar";
+        br_v11.lanes = 1;
+        br_v11.hashes_per_sec = static_cast<double>(ITER) / tr_v11.seconds;
+        br_v11.cycles_per_hash = static_cast<double>(tr_v11.cycles) / static_cast<double>(ITER);
+        out.push_back(br_v11);
     }
 #endif
 
@@ -1012,6 +1050,28 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
         br_v9.hashes_per_sec = static_cast<double>(ITER) / tr_v9.seconds;
         br_v9.cycles_per_hash = static_cast<double>(tr_v9.cycles) / static_cast<double>(ITER);
         out.push_back(br_v9);
+
+#if HAVE_SHA_INTRIN
+        if (simd.sha) {
+            auto tr_v12 = timed_run([&]() {
+                uint32_t nonce = 0;
+                for (; nonce + 8 <= ITER; nonce += 8) {
+                    hash_v5_avx2_batch8(header, mid, nonce, sink);
+                }
+                for (; nonce < ITER; ++nonce) {
+                    hash_v7_shani_full(header, mid, nonce, sink);
+                }
+            });
+            BenchmarkResult br_v12{};
+            br_v12.simd = "AVX2+SHA";
+            br_v12.version = version_name(Version::V12);
+            br_v12.backend = "avx2-batch+sha-tail";
+            br_v12.lanes = 8;
+            br_v12.hashes_per_sec = static_cast<double>(ITER) / tr_v12.seconds;
+            br_v12.cycles_per_hash = static_cast<double>(tr_v12.cycles) / static_cast<double>(ITER);
+            out.push_back(br_v12);
+        }
+#endif
     }
 #endif
 
@@ -1080,7 +1140,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             CreateWindowExA(
                 0,
                 "BUTTON",
-                "Run Benchmark V1..V10",
+                "Run Benchmark V1..V12",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                 12,
                 12,
@@ -1094,7 +1154,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_output = CreateWindowExA(
                 WS_EX_CLIENTEDGE,
                 "EDIT",
-                "Click 'Run Benchmark V1..V10' to start.",
+                "Click 'Run Benchmark V1..V12' to start.",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
                 12,
                 56,
