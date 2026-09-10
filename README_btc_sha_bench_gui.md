@@ -50,6 +50,7 @@ Start `btc_sha_bench_gui.exe`, then click `Run Benchmark V1..V14`.
 The GUI prints:
 
 - detected SIMD features,
+- correctness report (known nonces and backend consistency checks),
 - ranked table columns: `SIMD`, `Ver`, `Backend`, `Lanes`, `Hash/s`, `Cycles/hash`.
 
 ## Notes

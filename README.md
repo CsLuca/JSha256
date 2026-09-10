@@ -12,6 +12,7 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 - `Hash/s`
 - `Cycles/hash`
 - backend used (`scalar-core`, `avx2-8lane-real`, `sha-ni-real`, ...)
+- built-in correctness checks (known nonces + backend cross-check)
 
 ## Project Layout
 

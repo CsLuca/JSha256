@@ -398,6 +398,17 @@ struct TimerResult {
     unsigned long long cycles = 0;
 };
 
+static std::string hex32(const uint8_t in[32]) {
+    static const char* h = "0123456789abcdef";
+    std::string out;
+    out.resize(64);
+    for (int i = 0; i < 32; ++i) {
+        out[2 * i] = h[(in[i] >> 4) & 0x0f];
+        out[2 * i + 1] = h[in[i] & 0x0f];
+    }
+    return out;
+}
+
 template <typename F>
 static TimerResult timed_run(F&& fn) {
     LARGE_INTEGER freq{};
@@ -754,6 +765,80 @@ static void init_example_header(uint8_t header[80]) {
     store_be(header + 68, 0x65F00000u); // timestamp
     store_be(header + 72, 0x1d00ffffu); // nBits
     store_be(header + 76, 0u);          // nonce
+}
+
+struct ValidationReport {
+    bool ok = true;
+    std::string text;
+};
+
+static ValidationReport run_correctness_tests() {
+    ValidationReport rep{};
+
+    struct Known {
+        uint32_t nonce;
+        const char* hex;
+    };
+
+    const Known known[] = {
+        {0u, "0214cabb113df87d438977fd1f4ce32d17ca9d228076596adb2e655abe361e61"},
+        {1u, "65decd3eeac87b5d993f5e821a0512937ce3ec14a92e5f75a6898ba1af885dfa"},
+        {42u, "24fae796bb9468816192bbfc96a6f03ecd5ee41cd3b911f5cba90c94d2069514"},
+        {123456u, "7d4c06e486282268f74ef86360057532417bcb0b90c21814adee7bfb01bae8eb"}
+    };
+
+    const SimdInfo simd = detect_simd();
+
+    uint8_t header[80]{};
+    init_example_header(header);
+    const Midstate mid = make_midstate(header);
+
+    std::ostringstream oss;
+    oss << "Correctness\r\n";
+
+    for (const auto& k : known) {
+        uint8_t h1[32]{}, h2[32]{}, h3[32]{}, h4[32]{};
+        hash_v1_to_v4(header, mid, k.nonce, Version::V1, h1);
+        hash_v1_to_v4(header, mid, k.nonce, Version::V2, h2);
+        hash_v1_to_v4(header, mid, k.nonce, Version::V3, h3);
+        hash_v1_to_v4(header, mid, k.nonce, Version::V4, h4);
+
+        const std::string r1 = hex32(h1);
+        const std::string r2 = hex32(h2);
+        const std::string r3 = hex32(h3);
+        const std::string r4 = hex32(h4);
+
+        const bool pass = (r1 == k.hex) && (r2 == k.hex) && (r3 == k.hex) && (r4 == k.hex);
+        rep.ok = rep.ok && pass;
+        oss << "- nonce " << k.nonce << ": " << (pass ? "PASS" : "FAIL") << "\r\n";
+
+#if HAVE_SHA_INTRIN
+        if (simd.sha) {
+            uint8_t hs7[32]{}, hs11[32]{};
+            hash_v7_shani_full(header, mid, k.nonce, hs7);
+            hash_v11_shani_first_scalar_second(header, mid, k.nonce, hs11);
+            const bool pass_sha = (hex32(hs7) == k.hex) && (hex32(hs11) == k.hex);
+            rep.ok = rep.ok && pass_sha;
+            oss << "  SHA-NI paths: " << (pass_sha ? "PASS" : "FAIL") << "\r\n";
+        }
+#endif
+    }
+
+#if HAVE_AVX2_INTRIN
+    if (simd.avx2) {
+        uint8_t hv4[32]{}, hv5[32]{};
+        const uint32_t base = 64u;
+        hash_v1_to_v4(header, mid, base + 7, Version::V4, hv4);
+        hash_v5_avx2_batch8(header, mid, base, hv5);
+        const bool pass_avx2 = (hex32(hv4) == hex32(hv5));
+        rep.ok = rep.ok && pass_avx2;
+        oss << "- AVX2 batch lane check: " << (pass_avx2 ? "PASS" : "FAIL") << "\r\n";
+    }
+#endif
+
+    oss << "Overall: " << (rep.ok ? "PASS" : "FAIL") << "\r\n\r\n";
+    rep.text = oss.str();
+    return rep;
 }
 
 static std::vector<BenchmarkResult> run_all_benchmarks() {
@@ -1195,7 +1280,7 @@ static std::string format_cpu_features() {
     return oss.str();
 }
 
-static std::string format_results(const std::vector<BenchmarkResult>& rows) {
+static std::string format_results(const std::vector<BenchmarkResult>& rows, const ValidationReport& validation) {
     std::vector<BenchmarkResult> sorted = rows;
     std::sort(sorted.begin(), sorted.end(), [](const BenchmarkResult& a, const BenchmarkResult& b) {
         return a.hashes_per_sec > b.hashes_per_sec;
@@ -1203,6 +1288,7 @@ static std::string format_results(const std::vector<BenchmarkResult>& rows) {
 
     std::ostringstream oss;
     oss << format_cpu_features();
+    oss << validation.text;
     oss << std::left << std::setw(10) << "SIMD"
         << std::setw(6) << "Ver"
         << std::setw(17) << "Backend"
@@ -1266,8 +1352,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_COMMAND: {
             if (LOWORD(wParam) == 1001) {
                 set_output_text("Running benchmark...\r\n");
+                auto validation = bench::run_correctness_tests();
                 auto results = bench::run_all_benchmarks();
-                auto text = bench::format_results(results);
+                auto text = bench::format_results(results, validation);
                 set_output_text(text);
             }
             return 0;
