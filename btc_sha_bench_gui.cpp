@@ -230,7 +230,9 @@ enum class Version {
     V9 = 9,
     V10 = 10,
     V11 = 11,
-    V12 = 12
+    V12 = 12,
+    V13 = 13,
+    V14 = 14
 };
 
 static void hash_v1_to_v4(const uint8_t header[80], const Midstate& mid, uint32_t nonce, Version version, uint8_t out32[32]) {
@@ -430,6 +432,8 @@ static const char* version_name(Version v) {
         case Version::V10: return "V10";
         case Version::V11: return "V11";
         case Version::V12: return "V12";
+        case Version::V13: return "V13";
+        case Version::V14: return "V14";
         default: return "?";
     }
 }
@@ -1070,6 +1074,99 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
             br_v12.hashes_per_sec = static_cast<double>(ITER) / tr_v12.seconds;
             br_v12.cycles_per_hash = static_cast<double>(tr_v12.cycles) / static_cast<double>(ITER);
             out.push_back(br_v12);
+
+            const CpuInfo cpu = detect_cpu_info();
+            const unsigned int threads = std::max(1u, std::min(cpu.logical_cores, 32u));
+
+            auto tr_v13 = timed_run([&]() {
+                std::vector<std::thread> workers;
+                std::vector<uint8_t> local_sinks(threads, 0);
+                workers.reserve(threads);
+
+                const uint32_t chunk = ITER / threads;
+                uint32_t start = 0;
+                for (unsigned int t = 0; t < threads; ++t) {
+                    const uint32_t extra = (t < (ITER % threads)) ? 1u : 0u;
+                    const uint32_t begin = start;
+                    const uint32_t end = begin + chunk + extra;
+                    start = end;
+
+                    workers.emplace_back([&, t, begin, end]() {
+                        uint8_t local[32]{};
+                        uint32_t n = begin;
+                        for (; n + 8 <= end; n += 8) {
+                            hash_v5_avx2_batch8(header, mid, n, local);
+                        }
+                        for (; n < end; ++n) {
+                            hash_v7_shani_full(header, mid, n, local);
+                        }
+                        local_sinks[t] = local[0];
+                    });
+                }
+
+                for (auto& th : workers) {
+                    th.join();
+                }
+                for (uint8_t v : local_sinks) {
+                    sink[0] ^= v;
+                }
+            });
+
+            BenchmarkResult br_v13{};
+            br_v13.simd = "AVX2+SHA";
+            br_v13.version = version_name(Version::V13);
+            br_v13.backend = "mt-avx2+sha-tail";
+            br_v13.lanes = static_cast<int>(threads) * 8;
+            br_v13.hashes_per_sec = static_cast<double>(ITER) / tr_v13.seconds;
+            br_v13.cycles_per_hash = static_cast<double>(tr_v13.cycles) / static_cast<double>(ITER);
+            out.push_back(br_v13);
+
+            auto tr_v14 = timed_run([&]() {
+                std::vector<std::thread> workers;
+                std::vector<uint8_t> local_sinks(threads, 0);
+                workers.reserve(threads);
+
+                const uint32_t chunk = ITER / threads;
+                uint32_t start = 0;
+                for (unsigned int t = 0; t < threads; ++t) {
+                    const uint32_t extra = (t < (ITER % threads)) ? 1u : 0u;
+                    const uint32_t begin = start;
+                    const uint32_t end = begin + chunk + extra;
+                    start = end;
+
+                    workers.emplace_back([&, t, begin, end]() {
+                        uint8_t local[32]{};
+                        uint32_t n = begin;
+                        for (; n + 16 <= end; n += 16) {
+                            hash_v5_avx2_batch8(header, mid, n, local);
+                            hash_v5_avx2_batch8(header, mid, n + 8, local);
+                        }
+                        for (; n + 8 <= end; n += 8) {
+                            hash_v5_avx2_batch8(header, mid, n, local);
+                        }
+                        for (; n < end; ++n) {
+                            hash_v7_shani_full(header, mid, n, local);
+                        }
+                        local_sinks[t] = local[0];
+                    });
+                }
+
+                for (auto& th : workers) {
+                    th.join();
+                }
+                for (uint8_t v : local_sinks) {
+                    sink[0] ^= v;
+                }
+            });
+
+            BenchmarkResult br_v14{};
+            br_v14.simd = "AVX2+SHA";
+            br_v14.version = version_name(Version::V14);
+            br_v14.backend = "mt-avx2-2x8+sha";
+            br_v14.lanes = static_cast<int>(threads) * 16;
+            br_v14.hashes_per_sec = static_cast<double>(ITER) / tr_v14.seconds;
+            br_v14.cycles_per_hash = static_cast<double>(tr_v14.cycles) / static_cast<double>(ITER);
+            out.push_back(br_v14);
         }
 #endif
     }
@@ -1140,7 +1237,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             CreateWindowExA(
                 0,
                 "BUTTON",
-                "Run Benchmark V1..V12",
+                "Run Benchmark V1..V14",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                 12,
                 12,
@@ -1154,7 +1251,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_output = CreateWindowExA(
                 WS_EX_CLIENTEDGE,
                 "EDIT",
-                "Click 'Run Benchmark V1..V12' to start.",
+                "Click 'Run Benchmark V1..V14' to start.",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
                 12,
                 56,

@@ -45,7 +45,7 @@ If your toolchain does not need `-municode`, remove it.
 
 ## Run
 
-Start `btc_sha_bench_gui.exe`, then click `Run Benchmark V1..V5`.
+Start `btc_sha_bench_gui.exe`, then click `Run Benchmark V1..V14`.
 
 The GUI prints:
 
