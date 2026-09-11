@@ -23,7 +23,8 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 - automatic export in `benchmark-output/results-*.csv` and `benchmark-output/results-*.json`
 - phase-0 GPU integration scaffold (`Engine` column + GPU device info section)
 - phase-1 entry points with `G1..G6` benchmark rows when CUDA driver is detected
-- optional external CUDA runner support via `gpu_cuda_bench.exe` for real `G1/G2` rows
+- optional external CUDA runner support via `gpu_cuda_bench.exe` for real `G1..G6` rows
+- optional external OpenCL runner support via `gpu_opencl_bench.exe` for real `G1` rows
 
 CUDA build example for external runner:
 
@@ -31,7 +32,13 @@ CUDA build example for external runner:
 nvcc -O3 gpu_cuda_bench.cu -o gpu_cuda_bench.exe
 ```
 
-When `gpu_cuda_bench.exe` is present next to the GUI executable, parsed GPU rows (`G1..G6`) from the runner are merged into the benchmark output.
+OpenCL build example for external runner:
+
+```bash
+g++ -std=c++17 -O3 gpu_opencl_bench.cpp -o gpu_opencl_bench.exe -lOpenCL
+```
+
+When `gpu_cuda_bench.exe` and/or `gpu_opencl_bench.exe` are present next to the GUI executable, parsed GPU rows from available external runners are merged into the benchmark output.
 
 ## Project Layout
 

@@ -947,13 +947,16 @@ struct GpuDeviceInfo {
     std::string name = "No CUDA device detected";
     std::string compute_capability = "n/a";
     std::string driver_version = "n/a";
-    std::string external_runner = "gpu_cuda_bench.exe";
-    std::string external_runner_status = "not checked";
+    std::string external_runner_cuda = "gpu_cuda_bench.exe";
+    std::string external_runner_cuda_status = "not checked";
+    std::string external_runner_opencl = "gpu_opencl_bench.exe";
+    std::string external_runner_opencl_status = "not checked";
     unsigned long long vram_bytes = 0;
     int sm_count = 0;
     int clock_mhz = 0;
     bool available = false;
-    bool external_runner_found = false;
+    bool external_runner_cuda_found = false;
+    bool external_runner_opencl_found = false;
 };
 
 struct BenchContext {
@@ -970,8 +973,10 @@ struct BenchContext {
 
 static GpuDeviceInfo detect_gpu_device_info() {
     GpuDeviceInfo info{};
-    info.external_runner_found = std::filesystem::exists(info.external_runner);
-    info.external_runner_status = info.external_runner_found ? "found" : "missing";
+    info.external_runner_cuda_found = std::filesystem::exists(info.external_runner_cuda);
+    info.external_runner_cuda_status = info.external_runner_cuda_found ? "found" : "missing";
+    info.external_runner_opencl_found = std::filesystem::exists(info.external_runner_opencl);
+    info.external_runner_opencl_status = info.external_runner_opencl_found ? "found" : "missing";
 
     HMODULE nvcuda = LoadLibraryA("nvcuda.dll");
     if (!nvcuda) {
@@ -1072,9 +1077,13 @@ static GpuDeviceInfo detect_gpu_device_info() {
     return info;
 }
 
-static bool try_run_external_cuda_rows(uint32_t iter, std::vector<BenchmarkResult>& out) {
+static bool try_run_external_rows(uint32_t iter,
+                                  const char* exe,
+                                  const char* simd,
+                                  const char* backend,
+                                  std::vector<BenchmarkResult>& out) {
     std::ostringstream cmd;
-    cmd << "gpu_cuda_bench.exe --iter " << iter;
+    cmd << exe << " --iter " << iter;
 
     FILE* pipe = _popen(cmd.str().c_str(), "r");
     if (!pipe) {
@@ -1098,9 +1107,9 @@ static bool try_run_external_cuda_rows(uint32_t iter, std::vector<BenchmarkResul
 
         BenchmarkResult br{};
         br.engine = "GPU";
-        br.simd = "CUDA";
+        br.simd = simd;
         br.version = ver;
-        br.backend = "cuda-real-external";
+        br.backend = backend;
         if (ver == "G1" || ver == "G2" || ver == "G3") {
             br.lanes = 1024;
         } else if (ver == "G4") {
@@ -1140,6 +1149,29 @@ static void append_row(std::vector<BenchmarkResult>& out, const char* simd, cons
 
 static std::vector<BenchmarkResult> run_all_benchmarks_once(const BenchContext& ctx) {
     std::vector<BenchmarkResult> out;
+
+    std::vector<BenchmarkResult> external_rows;
+    const bool external_allowed = !ctx.gpu_external_disable;
+    bool external_ok = false;
+    if (external_allowed) {
+        std::vector<BenchmarkResult> tmp;
+        if (try_run_external_rows(ctx.iter, "gpu_cuda_bench.exe", "CUDA", "cuda-real-external", tmp)) {
+            external_ok = true;
+            out.insert(out.end(), tmp.begin(), tmp.end());
+        }
+        tmp.clear();
+        if (try_run_external_rows(ctx.iter, "gpu_opencl_bench.exe", "OPENCL", "opencl-real-external", tmp)) {
+            external_ok = true;
+            out.insert(out.end(), tmp.begin(), tmp.end());
+        }
+    }
+
+    if (ctx.gpu_external_only && external_ok) {
+        return out;
+    }
+    if (ctx.gpu_external_only && !external_ok) {
+        return out;
+    }
 
     struct SimdTier {
         const char* name;
@@ -1471,22 +1503,6 @@ static std::vector<BenchmarkResult> run_all_benchmarks_once(const BenchContext& 
 #endif
 
     if (ctx.gpu.available) {
-        std::vector<BenchmarkResult> external_rows;
-        const bool external_allowed = !ctx.gpu_external_disable;
-        bool external_ok = false;
-        if (external_allowed && try_run_external_cuda_rows(ctx.iter, external_rows)) {
-            external_ok = true;
-            for (auto& r : external_rows) {
-                out.push_back(r);
-            }
-        }
-
-        if (ctx.gpu_external_only && external_ok) {
-            return out;
-        }
-        if (ctx.gpu_external_only && !external_ok) {
-            return out;
-        }
 
         auto tr_g1 = timed_run([&]() {
             for (uint32_t n = 0; n < ctx.iter; ++n) {
@@ -1686,9 +1702,11 @@ static std::string format_gpu_features() {
     oss << "- SM/CU:    " << gpu.sm_count << "\r\n";
     oss << "- Clock:    " << gpu.clock_mhz << " MHz\r\n";
     oss << "- Ready:    " << (gpu.available ? "yes" : "no") << "\r\n\r\n";
-    oss << "CUDA external runner\r\n";
-    oss << "- File:     " << gpu.external_runner << "\r\n";
-    oss << "- Status:   " << gpu.external_runner_status << "\r\n\r\n";
+    oss << "External runners\r\n";
+    oss << "- CUDA file:    " << gpu.external_runner_cuda << "\r\n";
+    oss << "- CUDA status:  " << gpu.external_runner_cuda_status << "\r\n";
+    oss << "- OpenCL file:  " << gpu.external_runner_opencl << "\r\n";
+    oss << "- OpenCL status:" << gpu.external_runner_opencl_status << "\r\n\r\n";
     return oss.str();
 }
 
