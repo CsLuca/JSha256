@@ -1345,6 +1345,21 @@ static std::vector<BenchmarkResult> run_all_benchmarks_once(const BenchContext& 
             }
         });
         append_row(out, "CUDA", "G3", "g3-schedule-specialized", 1024, tr_g3, ctx.iter, "GPU");
+
+        auto tr_g4 = timed_run([&]() {
+            uint32_t n = 0;
+            for (; n + 16 <= ctx.iter; n += 16) {
+                hash_v5_avx2_batch8(ctx.header, ctx.mid, n, ctx.sink);
+                hash_v5_avx2_batch8(ctx.header, ctx.mid, n + 8, ctx.sink);
+            }
+            for (; n + 8 <= ctx.iter; n += 8) {
+                hash_v5_avx2_batch8(ctx.header, ctx.mid, n, ctx.sink);
+            }
+            for (; n < ctx.iter; ++n) {
+                hash_v1_to_v4(ctx.header, ctx.mid, n, Version::V4, ctx.sink);
+            }
+        });
+        append_row(out, "CUDA", "G4", "g4-batched-nonce-model", 2048, tr_g4, ctx.iter, "GPU");
     }
 
     return out;
@@ -1607,7 +1622,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             CreateWindowExA(
                 0,
                 "BUTTON",
-                "Run Benchmark V1..V15 + G1/G2/G3",
+                "Run Benchmark V1..V15 + G1/G2/G3/G4",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                 12,
                 12,
@@ -1621,7 +1636,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_output = CreateWindowExA(
                 WS_EX_CLIENTEDGE,
                 "EDIT",
-                "Click 'Run Benchmark V1..V15 + G1/G2/G3' to start.",
+                "Click 'Run Benchmark V1..V15 + G1/G2/G3/G4' to start.",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
                 12,
                 56,
@@ -1680,7 +1695,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     HWND hwnd = CreateWindowExA(
         0,
         kClassName,
-        "JSha256 v1.1.0 - Benchmark V1..V15 + G1/G2/G3",
+        "JSha256 v1.1.0 - Benchmark V1..V15 + G1/G2/G3/G4",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
