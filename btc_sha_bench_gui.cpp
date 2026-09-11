@@ -394,6 +394,7 @@ static SimdInfo detect_simd() {
 }
 
 struct BenchmarkResult {
+    std::string engine = "CPU";
     std::string simd;
     std::string version;
     std::string backend;
@@ -946,6 +947,21 @@ struct BenchContext {
     CpuInfo cpu{};
 };
 
+struct GpuDeviceInfo {
+    std::string backend = "CUDA";
+    std::string name = "No CUDA device detected";
+    std::string compute_capability = "n/a";
+    unsigned long long vram_bytes = 0;
+    int sm_count = 0;
+    int clock_mhz = 0;
+    bool available = false;
+};
+
+static GpuDeviceInfo detect_gpu_device_info() {
+    GpuDeviceInfo info{};
+    return info;
+}
+
 static void bench_row_key(const BenchmarkResult& r, std::string& key) {
     key = r.simd + "|" + r.version + "|" + r.backend + "|" + std::to_string(r.lanes);
 }
@@ -1393,6 +1409,20 @@ static std::string format_cpu_features() {
     return oss.str();
 }
 
+static std::string format_gpu_features() {
+    const GpuDeviceInfo gpu = detect_gpu_device_info();
+    std::ostringstream oss;
+    oss << "GPU info\r\n";
+    oss << "- Backend:  " << gpu.backend << "\r\n";
+    oss << "- Device:   " << gpu.name << "\r\n";
+    oss << "- CC:       " << gpu.compute_capability << "\r\n";
+    oss << "- VRAM:     " << gpu.vram_bytes << " bytes\r\n";
+    oss << "- SM/CU:    " << gpu.sm_count << "\r\n";
+    oss << "- Clock:    " << gpu.clock_mhz << " MHz\r\n";
+    oss << "- Ready:    " << (gpu.available ? "yes" : "no") << "\r\n\r\n";
+    return oss.str();
+}
+
 static std::string build_bar_chart(const std::vector<BenchmarkResult>& rows);
 
 static std::string format_results(const std::vector<BenchmarkResult>& rows, const ValidationReport& validation) {
@@ -1403,9 +1433,11 @@ static std::string format_results(const std::vector<BenchmarkResult>& rows, cons
 
     std::ostringstream oss;
     oss << format_cpu_features();
+    oss << format_gpu_features();
     oss << validation.text;
     oss << build_bar_chart(rows);
-    oss << std::left << std::setw(10) << "SIMD"
+    oss << std::left << std::setw(8) << "Engine"
+        << std::setw(10) << "SIMD"
         << std::setw(6) << "Ver"
         << std::setw(17) << "Backend"
         << std::setw(8) << "Lanes"
@@ -1414,9 +1446,10 @@ static std::string format_results(const std::vector<BenchmarkResult>& rows, cons
         << std::setw(14) << "Cycles/hash"
         << std::setw(12) << "Std Cyc"
         << "\r\n";
-    oss << "-------------------------------------------------------------------------------------------\r\n";
+    oss << "---------------------------------------------------------------------------------------------------\r\n";
     for (const auto& r : sorted) {
-        oss << std::left << std::setw(10) << r.simd
+        oss << std::left << std::setw(8) << r.engine
+            << std::setw(10) << r.simd
             << std::setw(6) << r.version
             << std::setw(17) << r.backend
             << std::setw(8) << r.lanes

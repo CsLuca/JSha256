@@ -21,6 +21,7 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 - built-in correctness checks (known nonces + backend cross-check)
 - repeat-run statistics (`Std H/s`, `Std Cyc`) with warmup
 - automatic export in `benchmark-output/results-*.csv` and `benchmark-output/results-*.json`
+- phase-0 GPU integration scaffold (`Engine` column + GPU device info section)
 
 ## Project Layout
 

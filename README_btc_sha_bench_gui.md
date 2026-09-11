@@ -56,8 +56,9 @@ btc_sha_bench_gui.exe --selftest
 The GUI prints:
 
 - detected SIMD features,
+- detected GPU section (phase-0 scaffold),
 - correctness report (known nonces and backend consistency checks),
-- ranked table columns: `SIMD`, `Ver`, `Backend`, `Lanes`, `Hash/s`, `Std H/s`, `Cycles/hash`, `Std Cyc`.
+- ranked table columns: `Engine`, `SIMD`, `Ver`, `Backend`, `Lanes`, `Hash/s`, `Std H/s`, `Cycles/hash`, `Std Cyc`.
 - text bar chart for top throughput rows.
 
 After each run, results are also exported in:
