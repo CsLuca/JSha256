@@ -70,4 +70,4 @@ This roadmap extends JSha256 from CPU-centric versions (`V1..V15`) to GPU-centri
 ## Current Implementation Status
 
 - `G1..G6` are available as integrated scaffold rows in main GUI benchmark flow.
-- External CUDA runner hook added (`gpu_cuda_bench.exe`) for real `G1/G2` ingestion when available.
+- External CUDA runner hook added (`gpu_cuda_bench.exe`) for real `G1..G4` ingestion when available.

@@ -25,6 +25,14 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 - phase-1 entry points with `G1..G6` benchmark rows when CUDA driver is detected
 - optional external CUDA runner support via `gpu_cuda_bench.exe` for real `G1/G2` rows
 
+CUDA build example for external runner:
+
+```bash
+nvcc -O3 gpu_cuda_bench.cu -o gpu_cuda_bench.exe
+```
+
+When `gpu_cuda_bench.exe` is present next to the GUI executable, parsed GPU rows from the runner are merged into the benchmark output.
+
 ## Project Layout
 
 - `btc_sha_bench_gui.cpp` - GUI + benchmark engine
