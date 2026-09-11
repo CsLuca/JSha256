@@ -5,6 +5,7 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -942,6 +943,7 @@ struct GpuDeviceInfo {
     std::string backend = "CUDA";
     std::string name = "No CUDA device detected";
     std::string compute_capability = "n/a";
+    std::string driver_version = "n/a";
     unsigned long long vram_bytes = 0;
     int sm_count = 0;
     int clock_mhz = 0;
@@ -961,19 +963,142 @@ struct BenchContext {
 static GpuDeviceInfo detect_gpu_device_info() {
     GpuDeviceInfo info{};
     HMODULE nvcuda = LoadLibraryA("nvcuda.dll");
-    if (nvcuda) {
-        info.available = true;
-        info.backend = "CUDA";
-        info.name = "NVIDIA GPU (driver detected)";
-        info.compute_capability = "runtime query pending";
-        FreeLibrary(nvcuda);
-    } else {
+    if (!nvcuda) {
         info.available = false;
         info.backend = "CUDA";
         info.name = "No CUDA driver detected";
         info.compute_capability = "n/a";
+        return info;
     }
+
+    typedef int CUresult;
+    typedef int CUdevice;
+    typedef CUresult (*cuInit_t)(unsigned int);
+    typedef CUresult (*cuDriverGetVersion_t)(int*);
+    typedef CUresult (*cuDeviceGetCount_t)(int*);
+    typedef CUresult (*cuDeviceGet_t)(CUdevice*, int);
+    typedef CUresult (*cuDeviceGetName_t)(char*, int, CUdevice);
+    typedef CUresult (*cuDeviceComputeCapability_t)(int*, int*, CUdevice);
+    typedef CUresult (*cuDeviceTotalMem_t)(size_t*, CUdevice);
+    typedef CUresult (*cuDeviceGetAttribute_t)(int*, int, CUdevice);
+
+    const auto p_cuInit = reinterpret_cast<cuInit_t>(GetProcAddress(nvcuda, "cuInit"));
+    const auto p_cuDriverGetVersion = reinterpret_cast<cuDriverGetVersion_t>(GetProcAddress(nvcuda, "cuDriverGetVersion"));
+    const auto p_cuDeviceGetCount = reinterpret_cast<cuDeviceGetCount_t>(GetProcAddress(nvcuda, "cuDeviceGetCount"));
+    const auto p_cuDeviceGet = reinterpret_cast<cuDeviceGet_t>(GetProcAddress(nvcuda, "cuDeviceGet"));
+    const auto p_cuDeviceGetName = reinterpret_cast<cuDeviceGetName_t>(GetProcAddress(nvcuda, "cuDeviceGetName"));
+    const auto p_cuDeviceComputeCapability = reinterpret_cast<cuDeviceComputeCapability_t>(GetProcAddress(nvcuda, "cuDeviceComputeCapability"));
+    const auto p_cuDeviceTotalMem = reinterpret_cast<cuDeviceTotalMem_t>(GetProcAddress(nvcuda, "cuDeviceTotalMem_v2"));
+    const auto p_cuDeviceGetAttribute = reinterpret_cast<cuDeviceGetAttribute_t>(GetProcAddress(nvcuda, "cuDeviceGetAttribute"));
+
+    if (!p_cuInit || !p_cuDriverGetVersion || !p_cuDeviceGetCount || !p_cuDeviceGet ||
+        !p_cuDeviceGetName || !p_cuDeviceComputeCapability || !p_cuDeviceTotalMem || !p_cuDeviceGetAttribute) {
+        info.available = false;
+        info.name = "CUDA driver API incomplete";
+        FreeLibrary(nvcuda);
+        return info;
+    }
+
+    if (p_cuInit(0) != 0) {
+        info.available = false;
+        info.name = "CUDA init failed";
+        FreeLibrary(nvcuda);
+        return info;
+    }
+
+    int drv = 0;
+    if (p_cuDriverGetVersion(&drv) == 0) {
+        std::ostringstream os;
+        os << (drv / 1000) << "." << ((drv % 1000) / 10);
+        info.driver_version = os.str();
+    }
+
+    int count = 0;
+    if (p_cuDeviceGetCount(&count) != 0 || count <= 0) {
+        info.available = false;
+        info.name = "No CUDA device found";
+        FreeLibrary(nvcuda);
+        return info;
+    }
+
+    CUdevice dev = 0;
+    if (p_cuDeviceGet(&dev, 0) == 0) {
+        char name[128]{};
+        if (p_cuDeviceGetName(name, static_cast<int>(sizeof(name)), dev) == 0) {
+            info.name = name;
+        }
+
+        int cc_major = 0;
+        int cc_minor = 0;
+        if (p_cuDeviceComputeCapability(&cc_major, &cc_minor, dev) == 0) {
+            std::ostringstream os;
+            os << cc_major << "." << cc_minor;
+            info.compute_capability = os.str();
+        }
+
+        size_t total_mem = 0;
+        if (p_cuDeviceTotalMem(&total_mem, dev) == 0) {
+            info.vram_bytes = static_cast<unsigned long long>(total_mem);
+        }
+
+        constexpr int CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT = 16;
+        constexpr int CU_DEVICE_ATTRIBUTE_CLOCK_RATE = 13;
+
+        int sm = 0;
+        if (p_cuDeviceGetAttribute(&sm, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, dev) == 0) {
+            info.sm_count = sm;
+        }
+
+        int khz = 0;
+        if (p_cuDeviceGetAttribute(&khz, CU_DEVICE_ATTRIBUTE_CLOCK_RATE, dev) == 0) {
+            info.clock_mhz = khz / 1000;
+        }
+    }
+
+    info.available = true;
+    info.backend = "CUDA";
+    FreeLibrary(nvcuda);
     return info;
+}
+
+static bool try_run_external_cuda_g1g2(uint32_t iter, std::vector<BenchmarkResult>& out) {
+    std::ostringstream cmd;
+    cmd << "gpu_cuda_bench.exe --iter " << iter;
+
+    FILE* pipe = _popen(cmd.str().c_str(), "r");
+    if (!pipe) {
+        return false;
+    }
+
+    char line[512]{};
+    while (std::fgets(line, static_cast<int>(sizeof(line)), pipe)) {
+        std::string s(line);
+        if (s.empty()) {
+            continue;
+        }
+        // Format: G1,<hashes_per_sec>,<ns_per_hash>
+        std::istringstream iss(s);
+        std::string ver;
+        std::string hs;
+        std::string ns;
+        if (!std::getline(iss, ver, ',')) continue;
+        if (!std::getline(iss, hs, ',')) continue;
+        if (!std::getline(iss, ns, ',')) continue;
+
+        BenchmarkResult br{};
+        br.engine = "GPU";
+        br.simd = "CUDA";
+        br.version = ver;
+        br.backend = "cuda-real-external";
+        br.lanes = 1024;
+        br.hashes_per_sec = std::atof(hs.c_str());
+        const double ns_per_hash = std::atof(ns.c_str());
+        br.cycles_per_hash = ns_per_hash;
+        out.push_back(br);
+    }
+
+    const int rc = _pclose(pipe);
+    return rc == 0 && !out.empty();
 }
 
 static void bench_row_key(const BenchmarkResult& r, std::string& key) {
@@ -1325,6 +1450,13 @@ static std::vector<BenchmarkResult> run_all_benchmarks_once(const BenchContext& 
 #endif
 
     if (ctx.gpu.available) {
+        std::vector<BenchmarkResult> external_rows;
+        if (try_run_external_cuda_g1g2(ctx.iter, external_rows)) {
+            for (auto& r : external_rows) {
+                out.push_back(r);
+            }
+        }
+
         auto tr_g1 = timed_run([&]() {
             for (uint32_t n = 0; n < ctx.iter; ++n) {
                 hash_v1_to_v4(ctx.header, ctx.mid, n, Version::V1, ctx.sink);
@@ -1513,6 +1645,7 @@ static std::string format_gpu_features() {
     oss << "GPU info\r\n";
     oss << "- Backend:  " << gpu.backend << "\r\n";
     oss << "- Device:   " << gpu.name << "\r\n";
+    oss << "- Driver:   " << gpu.driver_version << "\r\n";
     oss << "- CC:       " << gpu.compute_capability << "\r\n";
     oss << "- VRAM:     " << gpu.vram_bytes << " bytes\r\n";
     oss << "- SM/CU:    " << gpu.sm_count << "\r\n";

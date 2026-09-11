@@ -23,6 +23,7 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 - automatic export in `benchmark-output/results-*.csv` and `benchmark-output/results-*.json`
 - phase-0 GPU integration scaffold (`Engine` column + GPU device info section)
 - phase-1 entry points with `G1..G6` benchmark rows when CUDA driver is detected
+- optional external CUDA runner support via `gpu_cuda_bench.exe` for real `G1/G2` rows
 
 ## Project Layout
 

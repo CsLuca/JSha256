@@ -66,3 +66,8 @@ This roadmap extends JSha256 from CPU-centric versions (`V1..V15`) to GPU-centri
 2. Add `G2` and report speedup vs `G1`.
 3. Implement `G3-G4` and stabilize benchmark export format.
 4. Add `G5-G6` tuning and expose presets in GUI.
+
+## Current Implementation Status
+
+- `G1..G6` are available as integrated scaffold rows in main GUI benchmark flow.
+- External CUDA runner hook added (`gpu_cuda_bench.exe`) for real `G1/G2` ingestion when available.
