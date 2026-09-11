@@ -1864,6 +1864,108 @@ static std::string build_bar_chart(const std::vector<BenchmarkResult>& rows) {
 } // namespace bench
 
 static HWND g_output = nullptr;
+static HWND g_chart = nullptr;
+static std::vector<bench::BenchmarkResult> g_last_rows;
+
+static LRESULT CALLBACK ChartWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    (void)wParam;
+    (void)lParam;
+    switch (msg) {
+        case WM_PAINT: {
+            PAINTSTRUCT ps{};
+            HDC hdc = BeginPaint(hwnd, &ps);
+
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+
+            HBRUSH bg = CreateSolidBrush(RGB(246, 248, 252));
+            FillRect(hdc, &rc, bg);
+            DeleteObject(bg);
+
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, RGB(24, 38, 66));
+
+            HFONT hTitleFont = CreateFontA(22, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                           CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Segoe UI");
+            HFONT hBodyFont = CreateFontA(15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                          DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                          CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Segoe UI");
+            HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, hTitleFont));
+
+            TextOutA(hdc, 14, 10, "Performance Dashboard", 21);
+            SelectObject(hdc, hBodyFont);
+
+            if (g_last_rows.empty()) {
+                SetTextColor(hdc, RGB(90, 103, 130));
+                TextOutA(hdc, 14, 42, "Run benchmark to render professional chart.", 41);
+                SelectObject(hdc, oldFont);
+                DeleteObject(hTitleFont);
+                DeleteObject(hBodyFont);
+                EndPaint(hwnd, &ps);
+                return 0;
+            }
+
+            std::vector<bench::BenchmarkResult> sorted = g_last_rows;
+            std::sort(sorted.begin(), sorted.end(), [](const bench::BenchmarkResult& a, const bench::BenchmarkResult& b) {
+                return a.hashes_per_sec > b.hashes_per_sec;
+            });
+
+            const size_t N = std::min<size_t>(10, sorted.size());
+            double max_h = 0.0;
+            for (size_t i = 0; i < N; ++i) {
+                max_h = std::max(max_h, sorted[i].hashes_per_sec);
+            }
+            if (max_h <= 0.0) {
+                max_h = 1.0;
+            }
+
+            int y = 72;
+            const int left_label = 14;
+            const int bar_x = 170;
+            const int bar_h = 20;
+            const int row_gap = 12;
+            const int right_margin = 14;
+            const int bar_w_max = std::max(80, rc.right - bar_x - right_margin);
+
+            for (size_t i = 0; i < N; ++i) {
+                const auto& r = sorted[i];
+                const int bw = std::max(4, static_cast<int>((r.hashes_per_sec / max_h) * static_cast<double>(bar_w_max)));
+
+                std::ostringstream lbl;
+                lbl << r.version << " " << r.simd;
+                const std::string label = lbl.str();
+                SetTextColor(hdc, RGB(41, 55, 85));
+                TextOutA(hdc, left_label, y + 2, label.c_str(), static_cast<int>(label.size()));
+
+                RECT bar_rc{bar_x, y, bar_x + bw, y + bar_h};
+                HBRUSH bar_br = CreateSolidBrush(i == 0 ? RGB(18, 102, 211) : RGB(57, 148, 233));
+                FillRect(hdc, &bar_rc, bar_br);
+                DeleteObject(bar_br);
+
+                std::ostringstream v;
+                v << std::fixed << std::setprecision(0) << r.hashes_per_sec;
+                const std::string value = v.str();
+                SetTextColor(hdc, RGB(90, 103, 130));
+                TextOutA(hdc, bar_x + bw + 8, y + 2, value.c_str(), static_cast<int>(value.size()));
+
+                y += bar_h + row_gap;
+                if (y + bar_h > rc.bottom - 8) {
+                    break;
+                }
+            }
+
+            SelectObject(hdc, oldFont);
+            DeleteObject(hTitleFont);
+            DeleteObject(hBodyFont);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        default:
+            return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+}
+
 static void set_output_text(const std::string& s) {
     SetWindowTextA(g_output, s.c_str());
 }
@@ -1934,10 +2036,24 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
                 12,
                 56,
-                960,
+                620,
                 560,
                 hwnd,
                 reinterpret_cast<HMENU>(1002),
+                GetModuleHandle(nullptr),
+                nullptr);
+
+            g_chart = CreateWindowExA(
+                WS_EX_CLIENTEDGE,
+                "BtcShaChartWnd",
+                "",
+                WS_CHILD | WS_VISIBLE,
+                644,
+                56,
+                328,
+                560,
+                hwnd,
+                reinterpret_cast<HMENU>(1006),
                 GetModuleHandle(nullptr),
                 nullptr);
             return 0;
@@ -1957,7 +2073,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 auto results = bench::run_all_benchmarks(bench::g_gpu_external_only, bench::g_gpu_external_disable);
                 bench::export_results_files(results, validation);
                 auto text = bench::format_results(results, validation);
+                g_last_rows = results;
                 set_output_text(text);
+                if (g_chart) {
+                    InvalidateRect(g_chart, nullptr, TRUE);
+                }
                 return 0;
             }
             if (LOWORD(wParam) == 1005) {
@@ -1969,8 +2089,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_SIZE: {
             RECT rc{};
             GetClientRect(hwnd, &rc);
+
+            const int margin = 12;
+            const int top = 56;
+            const int chart_w = std::max(280, (rc.right - 3 * margin) / 3);
+            const int out_w = std::max(320, rc.right - 3 * margin - chart_w);
+            const int h = rc.bottom - 68;
+
             if (g_output) {
-                MoveWindow(g_output, 12, 56, rc.right - 24, rc.bottom - 68, TRUE);
+                MoveWindow(g_output, margin, top, out_w, h, TRUE);
+            }
+            if (g_chart) {
+                MoveWindow(g_chart, margin * 2 + out_w, top, chart_w, h, TRUE);
             }
             return 0;
         }
@@ -1996,6 +2126,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     }
 
     const char* kClassName = "BtcShaBenchGuiWnd";
+    const char* kChartClassName = "BtcShaChartWnd";
 
     WNDCLASSA wc{};
     wc.lpfnWndProc = WndProc;
@@ -2005,6 +2136,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
 
     RegisterClassA(&wc);
+
+    WNDCLASSA wcc{};
+    wcc.lpfnWndProc = ChartWndProc;
+    wcc.hInstance = hInstance;
+    wcc.lpszClassName = kChartClassName;
+    wcc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wcc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    RegisterClassA(&wcc);
 
     HWND hwnd = CreateWindowExA(
         0,

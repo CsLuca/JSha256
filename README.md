@@ -103,6 +103,20 @@ GPU mode switches:
 
 Then click `Run Benchmark V1..V15`.
 
+### Professional graphical report (HTML)
+
+You can generate a professional HTML dashboard from exported JSON results:
+
+```bash
+python generate_benchmark_report.py --open
+```
+
+Optional explicit input/output:
+
+```bash
+python generate_benchmark_report.py -i benchmark-output/results-<timestamp>.json -o benchmark-output/report.html --open
+```
+
 ## Example Scoreboard
 
 ```text
