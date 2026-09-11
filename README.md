@@ -24,7 +24,7 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 - phase-0 GPU integration scaffold (`Engine` column + GPU device info section)
 - phase-1 entry points with `G1..G6` benchmark rows when CUDA driver is detected
 - optional external CUDA runner support via `gpu_cuda_bench.exe` for real `G1..G6` rows
-- optional external OpenCL runner support via `gpu_opencl_bench.exe` for real `G1` rows
+- optional external OpenCL runner support via `gpu_opencl_bench.exe` for real `G1/G2` rows
 
 CUDA build example for external runner:
 
