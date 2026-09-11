@@ -11,7 +11,7 @@ Release notes draft: `RELEASE_NOTES_v1.0.0.md`
 ![Build](https://img.shields.io/badge/build-MSYS2%20UCRT64-brightgreen)
 ![SIMD](https://img.shields.io/badge/SIMD-SSE2%2FSSE4.1%2FAVX%2FAVX2%2FSHA--NI-orange)
 
-Win32 GUI benchmark for Bitcoin-style `double-SHA256` optimization stages `V1..V15` plus GPU `G1/G2` scaffold runs.
+Win32 GUI benchmark for Bitcoin-style `double-SHA256` optimization stages `V1..V15` plus GPU `G1/G2/G3` scaffold runs.
 
 It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboard with:
 
@@ -22,7 +22,7 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 - repeat-run statistics (`Std H/s`, `Std Cyc`) with warmup
 - automatic export in `benchmark-output/results-*.csv` and `benchmark-output/results-*.json`
 - phase-0 GPU integration scaffold (`Engine` column + GPU device info section)
-- phase-1 entry points with `G1` and `G2` benchmark rows when CUDA driver is detected
+- phase-1 entry points with `G1`, `G2`, and `G3` benchmark rows when CUDA driver is detected
 
 ## Project Layout
 

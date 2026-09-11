@@ -39,8 +39,9 @@ All notable changes to this project are documented in this file.
 
 - GPU phase-1 entry row `G1` in benchmark output when CUDA driver is detected.
 - GPU phase-1 row `G2` (midstate host + block #2 model) in benchmark output when CUDA driver is detected.
+- GPU phase-1 row `G3` (schedule-specialized model) in benchmark output when CUDA driver is detected.
 - GPU device detection improved to check CUDA driver presence (`nvcuda.dll`).
-- GUI labels updated to `V1..V15 + G1/G2`.
+- GUI labels updated to `V1..V15 + G1/G2/G3`.
 
 ### Validation
 
