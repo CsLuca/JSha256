@@ -1,6 +1,6 @@
 # JSha256
 
-Current release: **v1.0.0**
+Current release: **v1.0.1**
 
 Release status: build and `--selftest` validated locally on Windows (MSYS2 UCRT64).
 
@@ -11,7 +11,7 @@ Release notes draft: `RELEASE_NOTES_v1.0.0.md`
 ![Build](https://img.shields.io/badge/build-MSYS2%20UCRT64-brightgreen)
 ![SIMD](https://img.shields.io/badge/SIMD-SSE2%2FSSE4.1%2FAVX%2FAVX2%2FSHA--NI-orange)
 
-Win32 GUI benchmark for Bitcoin-style `double-SHA256` optimization stages `V1..V14`.
+Win32 GUI benchmark for Bitcoin-style `double-SHA256` optimization stages `V1..V15`.
 
 It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboard with:
 
@@ -27,6 +27,7 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 - `btc_sha_bench_gui.cpp` - GUI + benchmark engine
 - `README_btc_sha_bench_gui.md` - technical implementation notes
 - `CHANGELOG.md` - release notes
+- `ROADMAP_GPU.md` - plan for GPU extension (`G1..G6`)
 
 ## Optimization Versions
 
@@ -46,6 +47,7 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 | `V12` | AVX2 batch path with SHA-NI assisted tail path |
 | `V13` | Multi-thread AVX2 batch + SHA-NI tail |
 | `V14` | Multi-thread AVX2 dual-batch pipeline + SHA-NI tail |
+| `V15` | Multi-thread affinity-pinned AVX2 dual-batch + SHA-NI tail |
 
 ## SIMD Features Reported
 
@@ -74,7 +76,7 @@ Self-test mode (no GUI, exit code based):
 ./btc_sha_bench_gui.exe --selftest
 ```
 
-Then click `Run Benchmark V1..V14`.
+Then click `Run Benchmark V1..V15`.
 
 ## Example Scoreboard
 

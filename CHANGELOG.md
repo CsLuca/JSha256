@@ -20,3 +20,15 @@ All notable changes to this project are documented in this file.
 ### Notes
 
 - This project is intended for benchmarking/education and is not a production miner.
+
+## [1.0.1] - 2026-09-11
+
+### Added
+
+- `V15` CPU benchmark path with thread-affinity pinning plus AVX2 dual-batch and SHA-NI tail.
+- GUI range updated to `V1..V15` and title/version updated to `v1.0.1`.
+
+### Validation
+
+- Windows build: PASS
+- `--selftest`: PASS

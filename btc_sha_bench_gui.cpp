@@ -33,7 +33,7 @@
 
 namespace bench {
 
-static constexpr const char* APP_VERSION = "v1.0.0";
+static constexpr const char* APP_VERSION = "v1.0.1";
 
 static inline uint32_t rotr(uint32_t x, unsigned n) {
     return (x >> n) | (x << (32 - n));
@@ -240,7 +240,8 @@ enum class Version {
     V11 = 11,
     V12 = 12,
     V13 = 13,
-    V14 = 14
+    V14 = 14,
+    V15 = 15
 };
 
 static void hash_v1_to_v4(const uint8_t header[80], const Midstate& mid, uint32_t nonce, Version version, uint8_t out32[32]) {
@@ -484,6 +485,14 @@ static void set_process_benchmark_mode() {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 }
 
+static void set_thread_affinity_round_robin(unsigned int logical_id) {
+    if (logical_id >= 63u) {
+        return;
+    }
+    const DWORD_PTR mask = (static_cast<DWORD_PTR>(1) << logical_id);
+    SetThreadAffinityMask(GetCurrentThread(), mask);
+}
+
 static std::string now_stamp() {
     std::time_t t = std::time(nullptr);
     std::tm tmv{};
@@ -533,6 +542,7 @@ static const char* version_name(Version v) {
         case Version::V12: return "V12";
         case Version::V13: return "V13";
         case Version::V14: return "V14";
+        case Version::V15: return "V15";
         default: return "?";
     }
 }
@@ -1245,6 +1255,39 @@ static std::vector<BenchmarkResult> run_all_benchmarks_once(const BenchContext& 
                 for (uint8_t v : local_sinks) ctx.sink[0] ^= v;
             });
             append_row(out, "AVX2+SHA", version_name(Version::V14), "mt-avx2-2x8+sha", static_cast<int>(threads) * 16, tr14, ctx.iter);
+
+            auto tr15 = timed_run([&]() {
+                std::vector<std::thread> workers;
+                std::vector<uint8_t> local_sinks(threads, 0);
+                workers.reserve(threads);
+                const uint32_t chunk = ctx.iter / threads;
+                uint32_t start = 0;
+                for (unsigned int t = 0; t < threads; ++t) {
+                    const uint32_t extra = (t < (ctx.iter % threads)) ? 1u : 0u;
+                    const uint32_t begin = start;
+                    const uint32_t end = begin + chunk + extra;
+                    start = end;
+                    workers.emplace_back([&, t, begin, end]() {
+                        set_thread_affinity_round_robin(t);
+                        uint8_t local[32]{};
+                        uint32_t n = begin;
+                        for (; n + 16 <= end; n += 16) {
+                            hash_v5_avx2_batch8(ctx.header, ctx.mid, n, local);
+                            hash_v5_avx2_batch8(ctx.header, ctx.mid, n + 8, local);
+                        }
+                        for (; n + 8 <= end; n += 8) {
+                            hash_v5_avx2_batch8(ctx.header, ctx.mid, n, local);
+                        }
+                        for (; n < end; ++n) {
+                            hash_v7_shani_full(ctx.header, ctx.mid, n, local);
+                        }
+                        local_sinks[t] = local[0];
+                    });
+                }
+                for (auto& th : workers) th.join();
+                for (uint8_t v : local_sinks) ctx.sink[0] ^= v;
+            });
+            append_row(out, "AVX2+SHA", version_name(Version::V15), "mt-affinity-avx2+sha", static_cast<int>(threads) * 16, tr15, ctx.iter);
         }
 #endif
     }
@@ -1490,7 +1533,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             CreateWindowExA(
                 0,
                 "BUTTON",
-                "Run Benchmark V1..V14",
+                "Run Benchmark V1..V15",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                 12,
                 12,
@@ -1504,7 +1547,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_output = CreateWindowExA(
                 WS_EX_CLIENTEDGE,
                 "EDIT",
-                "Click 'Run Benchmark V1..V14' to start.",
+                "Click 'Run Benchmark V1..V15' to start.",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
                 12,
                 56,
@@ -1563,7 +1606,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     HWND hwnd = CreateWindowExA(
         0,
         kClassName,
-        "JSha256 v1.0.0 - Benchmark V1..V14 + SIMD Scoreboard",
+        "JSha256 v1.0.1 - Benchmark V1..V15 + SIMD Scoreboard",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
