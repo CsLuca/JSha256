@@ -961,6 +961,8 @@ struct BenchContext {
     SimdInfo simd{};
     CpuInfo cpu{};
     GpuDeviceInfo gpu{};
+    bool gpu_external_only = false;
+    bool gpu_external_disable = false;
 };
 
 static GpuDeviceInfo detect_gpu_device_info() {
@@ -1467,10 +1469,20 @@ static std::vector<BenchmarkResult> run_all_benchmarks_once(const BenchContext& 
 
     if (ctx.gpu.available) {
         std::vector<BenchmarkResult> external_rows;
-        if (try_run_external_cuda_rows(ctx.iter, external_rows)) {
+        const bool external_allowed = !ctx.gpu_external_disable;
+        bool external_ok = false;
+        if (external_allowed && try_run_external_cuda_rows(ctx.iter, external_rows)) {
+            external_ok = true;
             for (auto& r : external_rows) {
                 out.push_back(r);
             }
+        }
+
+        if (ctx.gpu_external_only && external_ok) {
+            return out;
+        }
+        if (ctx.gpu_external_only && !external_ok) {
+            return out;
         }
 
         auto tr_g1 = timed_run([&]() {
@@ -1555,7 +1567,7 @@ static std::vector<BenchmarkResult> run_all_benchmarks_once(const BenchContext& 
     return out;
 }
 
-static std::vector<BenchmarkResult> run_all_benchmarks() {
+static std::vector<BenchmarkResult> run_all_benchmarks(bool gpu_external_only = false, bool gpu_external_disable = false) {
     set_process_benchmark_mode();
 
     const SimdInfo simd = detect_simd();
@@ -1580,6 +1592,8 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
     warm.simd = simd;
     warm.cpu = cpu;
     warm.gpu = gpu;
+    warm.gpu_external_only = gpu_external_only;
+    warm.gpu_external_disable = gpu_external_disable;
     (void)run_all_benchmarks_once(warm);
 
     std::map<std::string, std::vector<BenchmarkResult>> grouped;
@@ -1592,6 +1606,8 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
         ctx.simd = simd;
         ctx.cpu = cpu;
         ctx.gpu = gpu;
+        ctx.gpu_external_only = gpu_external_only;
+        ctx.gpu_external_disable = gpu_external_disable;
 
         auto rows = run_all_benchmarks_once(ctx);
         for (const auto& row : rows) {
@@ -1805,6 +1821,8 @@ static std::string build_bar_chart(const std::vector<BenchmarkResult>& rows) {
 } // namespace bench
 
 static HWND g_output = nullptr;
+static bool g_gpu_external_only = false;
+static bool g_gpu_external_disable = false;
 
 static void set_output_text(const std::string& s) {
     SetWindowTextA(g_output, s.c_str());
@@ -1827,6 +1845,34 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 GetModuleHandle(nullptr),
                 nullptr);
 
+            CreateWindowExA(
+                0,
+                "BUTTON",
+                "External GPU only",
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                248,
+                16,
+                140,
+                22,
+                hwnd,
+                reinterpret_cast<HMENU>(1003),
+                GetModuleHandle(nullptr),
+                nullptr);
+
+            CreateWindowExA(
+                0,
+                "BUTTON",
+                "Disable external GPU",
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                398,
+                16,
+                170,
+                22,
+                hwnd,
+                reinterpret_cast<HMENU>(1004),
+                GetModuleHandle(nullptr),
+                nullptr);
+
             g_output = CreateWindowExA(
                 WS_EX_CLIENTEDGE,
                 "EDIT",
@@ -1843,10 +1889,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
         }
         case WM_COMMAND: {
+            if (LOWORD(wParam) == 1003) {
+                g_gpu_external_only = !g_gpu_external_only;
+                return 0;
+            }
+            if (LOWORD(wParam) == 1004) {
+                g_gpu_external_disable = !g_gpu_external_disable;
+                return 0;
+            }
             if (LOWORD(wParam) == 1001) {
                 set_output_text("Running benchmark...\r\n");
                 auto validation = bench::run_correctness_tests();
-                auto results = bench::run_all_benchmarks();
+                auto results = bench::run_all_benchmarks(g_gpu_external_only, g_gpu_external_disable);
                 bench::export_results_files(results, validation);
                 auto text = bench::format_results(results, validation);
                 set_output_text(text);
@@ -1873,6 +1927,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     if (lpCmdLine && std::strstr(lpCmdLine, "--selftest") != nullptr) {
         auto validation = bench::run_correctness_tests();
         return validation.ok ? 0 : 2;
+    }
+
+    if (lpCmdLine && std::strstr(lpCmdLine, "--gpu-external-only") != nullptr) {
+        g_gpu_external_only = true;
+    }
+    if (lpCmdLine && std::strstr(lpCmdLine, "--gpu-external-disable") != nullptr) {
+        g_gpu_external_disable = true;
     }
 
     const char* kClassName = "BtcShaBenchGuiWnd";

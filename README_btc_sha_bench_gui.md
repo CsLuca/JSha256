@@ -53,6 +53,13 @@ Headless self-test mode (for CI):
 btc_sha_bench_gui.exe --selftest
 ```
 
+GPU mode flags:
+
+```bat
+btc_sha_bench_gui.exe --gpu-external-only
+btc_sha_bench_gui.exe --gpu-external-disable
+```
+
 The GUI prints:
 
 - detected SIMD features,

@@ -87,6 +87,13 @@ Self-test mode (no GUI, exit code based):
 ./btc_sha_bench_gui.exe --selftest
 ```
 
+GPU mode switches:
+
+```bash
+./btc_sha_bench_gui.exe --gpu-external-only
+./btc_sha_bench_gui.exe --gpu-external-disable
+```
+
 Then click `Run Benchmark V1..V15`.
 
 ## Example Scoreboard
