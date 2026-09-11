@@ -72,6 +72,7 @@ constexpr size_t kKnownCount = sizeof(kKnown) / sizeof(kKnown[0]);
 struct Options {
     int iter = 120000;
     bool run_check = true;
+    bool check_all = false;
 };
 
 struct Timing {
@@ -411,6 +412,58 @@ __global__ void g2_check_kernel(const uint32_t* nonces, uint8_t* out_hashes, uin
     }
 }
 
+__global__ void g3_check_kernel(const uint32_t* nonces, uint8_t* out_hashes, uint32_t count) {
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= count) {
+        return;
+    }
+    uint32_t digest[8];
+    double_sha256_header_g3_sched(nonces[idx], digest);
+    uint8_t* out = out_hashes + idx * 32;
+    for (int i = 0; i < 8; ++i) {
+        store_be(out + i * 4, digest[i]);
+    }
+}
+
+__global__ void g4_check_kernel(const uint32_t* nonces, uint8_t* out_hashes, uint32_t count) {
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= count) {
+        return;
+    }
+    uint32_t digest[8];
+    double_sha256_header_g3_sched(nonces[idx], digest);
+    uint8_t* out = out_hashes + idx * 32;
+    for (int i = 0; i < 8; ++i) {
+        store_be(out + i * 4, digest[i]);
+    }
+}
+
+__global__ void g5_check_kernel(const uint32_t* nonces, uint8_t* out_hashes, uint32_t count) {
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= count) {
+        return;
+    }
+    uint32_t digest[8];
+    double_sha256_header_g3_sched(nonces[idx], digest);
+    uint8_t* out = out_hashes + idx * 32;
+    for (int i = 0; i < 8; ++i) {
+        store_be(out + i * 4, digest[i]);
+    }
+}
+
+__global__ void g6_check_kernel(const uint32_t* nonces, uint8_t* out_hashes, uint32_t count) {
+    const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= count) {
+        return;
+    }
+    uint32_t digest[8];
+    double_sha256_header_g3_sched(nonces[idx], digest);
+    uint8_t* out = out_hashes + idx * 32;
+    for (int i = 0; i < 8; ++i) {
+        store_be(out + i * 4, digest[i]);
+    }
+}
+
 void init_example_header(uint8_t header[80]) {
     std::memset(header, 0, 80);
     header[0] = 0x01;
@@ -459,7 +512,7 @@ bool parse_hex_32(const char* hex, uint8_t out[32]) {
     return true;
 }
 
-bool run_correctness_check() {
+bool run_correctness_check(bool check_all) {
     const uint32_t count = static_cast<uint32_t>(kKnownCount);
     uint32_t nonces[kKnownCount];
     for (uint32_t i = 0; i < count; ++i) {
@@ -469,9 +522,19 @@ bool run_correctness_check() {
     uint32_t* d_nonces = nullptr;
     uint8_t* d_g1 = nullptr;
     uint8_t* d_g2 = nullptr;
+    uint8_t* d_g3 = nullptr;
+    uint8_t* d_g4 = nullptr;
+    uint8_t* d_g5 = nullptr;
+    uint8_t* d_g6 = nullptr;
     CUDA_CHECK(cudaMalloc(&d_nonces, count * sizeof(uint32_t)));
     CUDA_CHECK(cudaMalloc(&d_g1, count * 32));
     CUDA_CHECK(cudaMalloc(&d_g2, count * 32));
+    if (check_all) {
+        CUDA_CHECK(cudaMalloc(&d_g3, count * 32));
+        CUDA_CHECK(cudaMalloc(&d_g4, count * 32));
+        CUDA_CHECK(cudaMalloc(&d_g5, count * 32));
+        CUDA_CHECK(cudaMalloc(&d_g6, count * 32));
+    }
     CUDA_CHECK(cudaMemcpy(d_nonces, nonces, count * sizeof(uint32_t), cudaMemcpyHostToDevice));
 
     const int threads = 128;
@@ -480,12 +543,32 @@ bool run_correctness_check() {
     CUDA_CHECK(cudaGetLastError());
     g2_check_kernel<<<blocks, threads>>>(d_nonces, d_g2, count);
     CUDA_CHECK(cudaGetLastError());
+    if (check_all) {
+        g3_check_kernel<<<blocks, threads>>>(d_nonces, d_g3, count);
+        CUDA_CHECK(cudaGetLastError());
+        g4_check_kernel<<<blocks, threads>>>(d_nonces, d_g4, count);
+        CUDA_CHECK(cudaGetLastError());
+        g5_check_kernel<<<blocks, threads>>>(d_nonces, d_g5, count);
+        CUDA_CHECK(cudaGetLastError());
+        g6_check_kernel<<<blocks, threads>>>(d_nonces, d_g6, count);
+        CUDA_CHECK(cudaGetLastError());
+    }
     CUDA_CHECK(cudaDeviceSynchronize());
 
     uint8_t got_g1[kKnownCount * 32];
     uint8_t got_g2[kKnownCount * 32];
+    uint8_t got_g3[kKnownCount * 32];
+    uint8_t got_g4[kKnownCount * 32];
+    uint8_t got_g5[kKnownCount * 32];
+    uint8_t got_g6[kKnownCount * 32];
     CUDA_CHECK(cudaMemcpy(got_g1, d_g1, count * 32, cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(got_g2, d_g2, count * 32, cudaMemcpyDeviceToHost));
+    if (check_all) {
+        CUDA_CHECK(cudaMemcpy(got_g3, d_g3, count * 32, cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(got_g4, d_g4, count * 32, cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(got_g5, d_g5, count * 32, cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(got_g6, d_g6, count * 32, cudaMemcpyDeviceToHost));
+    }
 
     bool ok = true;
     for (uint32_t i = 0; i < count; ++i) {
@@ -499,11 +582,24 @@ bool run_correctness_check() {
             ok = false;
             break;
         }
+        if (check_all) {
+            if (std::memcmp(got_g3 + i * 32, expected, 32) != 0 ||
+                std::memcmp(got_g4 + i * 32, expected, 32) != 0 ||
+                std::memcmp(got_g5 + i * 32, expected, 32) != 0 ||
+                std::memcmp(got_g6 + i * 32, expected, 32) != 0) {
+                ok = false;
+                break;
+            }
+        }
     }
 
     cudaFree(d_nonces);
     cudaFree(d_g1);
     cudaFree(d_g2);
+    if (d_g3) cudaFree(d_g3);
+    if (d_g4) cudaFree(d_g4);
+    if (d_g5) cudaFree(d_g5);
+    if (d_g6) cudaFree(d_g6);
     return ok;
 }
 
@@ -516,6 +612,11 @@ bool parse_options(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(argv[i], "--no-check") == 0) {
             options.run_check = false;
+            continue;
+        }
+        if (std::strcmp(argv[i], "--check-all") == 0) {
+            options.check_all = true;
+            options.run_check = true;
             continue;
         }
     }
@@ -690,8 +791,9 @@ int main(int argc, char** argv) {
     }
 
     if (options.run_check) {
-        if (!run_correctness_check()) {
-            std::fprintf(stderr, "Correctness check failed for G1/G2\n");
+        if (!run_correctness_check(options.check_all)) {
+            std::fprintf(stderr, "Correctness check failed for G1/G2%s\n",
+                         options.check_all ? "/G3/G4/G5/G6" : "");
             return 4;
         }
     }
