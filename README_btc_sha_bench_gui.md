@@ -1,4 +1,4 @@
-# Bitcoin SHA256 Benchmark GUI (V1..V15 + G1/G2/G3/G4)
+# Bitcoin SHA256 Benchmark GUI (V1..V15 + G1..G5)
 
 This project provides a single Windows executable in C++ that:
 
@@ -45,7 +45,7 @@ If your toolchain does not need `-municode`, remove it.
 
 ## Run
 
-Start `btc_sha_bench_gui.exe`, then click `Run Benchmark V1..V15 + G1/G2/G3/G4`.
+Start `btc_sha_bench_gui.exe`, then click `Run Benchmark V1..V15 + G1..G5`.
 
 Headless self-test mode (for CI):
 
