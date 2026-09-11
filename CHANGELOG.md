@@ -50,3 +50,22 @@ All notable changes to this project are documented in this file.
 
 - Windows build: PASS
 - `--selftest`: PASS
+
+## [1.2.0] - 2026-09-11
+
+### Added
+
+- CUDA external runner upgraded to real `G1..G6` paths with end-to-end double-SHA256.
+- CUDA runner correctness checks expanded with optional `--check-all` parity validation across `G1..G6`.
+- OpenCL external runner introduced and extended from `G1` to full `G1..G6` progression.
+- OpenCL runner includes optional `--check-all` parity validation across `G1..G6`.
+- GUI external ingestion supports both `gpu_cuda_bench.exe` and `gpu_opencl_bench.exe` simultaneously.
+- Benchmark result model/export now includes `engine` and `gpu_api` to separate CUDA vs OpenCL rows.
+- GUI output table now shows an explicit `API` column for GPU rows.
+- Main GUI now includes a `Support my work` button (PayPal link).
+
+### Validation
+
+- Windows GUI build: PASS
+- OpenCL runner build: PASS
+- `--selftest`: PASS

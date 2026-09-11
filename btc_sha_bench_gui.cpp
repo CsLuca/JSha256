@@ -34,7 +34,7 @@
 
 namespace bench {
 
-static constexpr const char* APP_VERSION = "v1.1.0";
+static constexpr const char* APP_VERSION = "v1.2.0";
 
 static inline uint32_t rotr(uint32_t x, unsigned n) {
     return (x >> n) | (x << (32 - n));
@@ -1913,6 +1913,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 GetModuleHandle(nullptr),
                 nullptr);
 
+            CreateWindowExA(
+                0,
+                "BUTTON",
+                "[PP] Support my work",
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                580,
+                12,
+                180,
+                28,
+                hwnd,
+                reinterpret_cast<HMENU>(1005),
+                GetModuleHandle(nullptr),
+                nullptr);
+
             g_output = CreateWindowExA(
                 WS_EX_CLIENTEDGE,
                 "EDIT",
@@ -1944,6 +1958,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 bench::export_results_files(results, validation);
                 auto text = bench::format_results(results, validation);
                 set_output_text(text);
+                return 0;
+            }
+            if (LOWORD(wParam) == 1005) {
+                WinExec("rundll32 url.dll,FileProtocolHandler https://www.paypal.com", SW_SHOWNORMAL);
+                return 0;
             }
             return 0;
         }
@@ -1990,7 +2009,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     HWND hwnd = CreateWindowExA(
         0,
         kClassName,
-        "JSha256 v1.1.0 - Benchmark V1..V15 + G1..G6",
+        "JSha256 v1.2.0 - Benchmark V1..V15 + G1..G6",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
