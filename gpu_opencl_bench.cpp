@@ -333,6 +333,32 @@ __kernel void g4_bench(__global const uchar* header80,
     out[idx] = acc;
 }
 
+__kernel void g5_bench(__global const uchar* header80,
+                       __global const uint* midstate,
+                       uint nonce_base,
+                       uint iter,
+                       __global uint* out) {
+    const uint idx = get_global_id(0);
+    if (idx >= iter) return;
+    uint digest[8];
+    double_sha256_header_g3(header80, midstate, nonce_base + idx, digest);
+    out[idx] = digest[2];
+}
+
+__kernel void g6_bench(__global const uchar* header80,
+                       __global const uint* midstate,
+                       uint nonce_base,
+                       uint iter,
+                       __global uint* out) {
+    const uint idx = get_global_id(0);
+    const uint stride = get_global_size(0);
+    for (uint i = idx; i < iter; i += stride) {
+        uint digest[8];
+        double_sha256_header_g3(header80, midstate, nonce_base + i, digest);
+        out[i] = digest[3];
+    }
+}
+
 __kernel void g1_check(__global const uchar* header80, __global const uint* nonces, uint count, __global uint* out_words) {
     const uint idx = get_global_id(0);
     if (idx >= count) return;
@@ -369,6 +395,32 @@ __kernel void g3_check(__global const uchar* header80,
 }
 
 __kernel void g4_check(__global const uchar* header80,
+                       __global const uint* midstate,
+                       __global const uint* nonces,
+                       uint count,
+                       __global uint* out_words) {
+    const uint idx = get_global_id(0);
+    if (idx >= count) return;
+    uint digest[8];
+    double_sha256_header_g3(header80, midstate, nonces[idx], digest);
+    const uint base = idx * 8u;
+    for (int i = 0; i < 8; ++i) out_words[base + i] = digest[i];
+}
+
+__kernel void g5_check(__global const uchar* header80,
+                       __global const uint* midstate,
+                       __global const uint* nonces,
+                       uint count,
+                       __global uint* out_words) {
+    const uint idx = get_global_id(0);
+    if (idx >= count) return;
+    uint digest[8];
+    double_sha256_header_g3(header80, midstate, nonces[idx], digest);
+    const uint base = idx * 8u;
+    for (int i = 0; i < 8; ++i) out_words[base + i] = digest[i];
+}
+
+__kernel void g6_check(__global const uchar* header80,
                        __global const uint* midstate,
                        __global const uint* nonces,
                        uint count,
@@ -443,6 +495,10 @@ int main(int argc, char** argv) {
     if (!check_status(st, "clCreateKernel(g3_bench)")) return 3;
     cl_kernel kernel_g4_bench = clCreateKernel(program, "g4_bench", &st);
     if (!check_status(st, "clCreateKernel(g4_bench)")) return 3;
+    cl_kernel kernel_g5_bench = clCreateKernel(program, "g5_bench", &st);
+    if (!check_status(st, "clCreateKernel(g5_bench)")) return 3;
+    cl_kernel kernel_g6_bench = clCreateKernel(program, "g6_bench", &st);
+    if (!check_status(st, "clCreateKernel(g6_bench)")) return 3;
     cl_kernel kernel_g1_check = clCreateKernel(program, "g1_check", &st);
     if (!check_status(st, "clCreateKernel(g1_check)")) return 3;
     cl_kernel kernel_g2_check = clCreateKernel(program, "g2_check", &st);
@@ -451,6 +507,10 @@ int main(int argc, char** argv) {
     if (!check_status(st, "clCreateKernel(g3_check)")) return 3;
     cl_kernel kernel_g4_check = clCreateKernel(program, "g4_check", &st);
     if (!check_status(st, "clCreateKernel(g4_check)")) return 3;
+    cl_kernel kernel_g5_check = clCreateKernel(program, "g5_check", &st);
+    if (!check_status(st, "clCreateKernel(g5_check)")) return 3;
+    cl_kernel kernel_g6_check = clCreateKernel(program, "g6_check", &st);
+    if (!check_status(st, "clCreateKernel(g6_check)")) return 3;
 
     uint8_t header[80];
     uint32_t midstate[8];
@@ -483,6 +543,12 @@ int main(int argc, char** argv) {
         cl_mem d_words_g4 = clCreateBuffer(context, CL_MEM_WRITE_ONLY,
                                            kKnownCount * 8 * sizeof(uint32_t), nullptr, &st);
         if (!check_status(st, "clCreateBuffer(words_g4)")) return 4;
+        cl_mem d_words_g5 = clCreateBuffer(context, CL_MEM_WRITE_ONLY,
+                                           kKnownCount * 8 * sizeof(uint32_t), nullptr, &st);
+        if (!check_status(st, "clCreateBuffer(words_g5)")) return 4;
+        cl_mem d_words_g6 = clCreateBuffer(context, CL_MEM_WRITE_ONLY,
+                                           kKnownCount * 8 * sizeof(uint32_t), nullptr, &st);
+        if (!check_status(st, "clCreateBuffer(words_g6)")) return 4;
 
         const uint32_t count_u32 = static_cast<uint32_t>(kKnownCount);
         st = clSetKernelArg(kernel_g1_check, 0, sizeof(cl_mem), &d_header);
@@ -512,6 +578,20 @@ int main(int argc, char** argv) {
             st |= clSetKernelArg(kernel_g4_check, 3, sizeof(uint32_t), &count_u32);
             st |= clSetKernelArg(kernel_g4_check, 4, sizeof(cl_mem), &d_words_g4);
             if (!check_status(st, "clSetKernelArg(g4_check)")) return 4;
+
+            st = clSetKernelArg(kernel_g5_check, 0, sizeof(cl_mem), &d_header);
+            st |= clSetKernelArg(kernel_g5_check, 1, sizeof(cl_mem), &d_midstate);
+            st |= clSetKernelArg(kernel_g5_check, 2, sizeof(cl_mem), &d_nonces);
+            st |= clSetKernelArg(kernel_g5_check, 3, sizeof(uint32_t), &count_u32);
+            st |= clSetKernelArg(kernel_g5_check, 4, sizeof(cl_mem), &d_words_g5);
+            if (!check_status(st, "clSetKernelArg(g5_check)")) return 4;
+
+            st = clSetKernelArg(kernel_g6_check, 0, sizeof(cl_mem), &d_header);
+            st |= clSetKernelArg(kernel_g6_check, 1, sizeof(cl_mem), &d_midstate);
+            st |= clSetKernelArg(kernel_g6_check, 2, sizeof(cl_mem), &d_nonces);
+            st |= clSetKernelArg(kernel_g6_check, 3, sizeof(uint32_t), &count_u32);
+            st |= clSetKernelArg(kernel_g6_check, 4, sizeof(cl_mem), &d_words_g6);
+            if (!check_status(st, "clSetKernelArg(g6_check)")) return 4;
         }
 
         const size_t local = 64;
@@ -525,6 +605,10 @@ int main(int argc, char** argv) {
             if (!check_status(st, "clEnqueueNDRangeKernel(g3_check)")) return 4;
             st = clEnqueueNDRangeKernel(queue, kernel_g4_check, 1, nullptr, &global, &local, 0, nullptr, nullptr);
             if (!check_status(st, "clEnqueueNDRangeKernel(g4_check)")) return 4;
+            st = clEnqueueNDRangeKernel(queue, kernel_g5_check, 1, nullptr, &global, &local, 0, nullptr, nullptr);
+            if (!check_status(st, "clEnqueueNDRangeKernel(g5_check)")) return 4;
+            st = clEnqueueNDRangeKernel(queue, kernel_g6_check, 1, nullptr, &global, &local, 0, nullptr, nullptr);
+            if (!check_status(st, "clEnqueueNDRangeKernel(g6_check)")) return 4;
         }
         st = clFinish(queue);
         if (!check_status(st, "clFinish(check)")) return 4;
@@ -533,6 +617,8 @@ int main(int argc, char** argv) {
         std::vector<uint32_t> words_g2(kKnownCount * 8, 0);
         std::vector<uint32_t> words_g3(kKnownCount * 8, 0);
         std::vector<uint32_t> words_g4(kKnownCount * 8, 0);
+        std::vector<uint32_t> words_g5(kKnownCount * 8, 0);
+        std::vector<uint32_t> words_g6(kKnownCount * 8, 0);
         st = clEnqueueReadBuffer(queue, d_words_g1, CL_TRUE, 0,
                                  words_g1.size() * sizeof(uint32_t), words_g1.data(), 0, nullptr, nullptr);
         if (!check_status(st, "clEnqueueReadBuffer(g1_check)")) return 4;
@@ -546,6 +632,12 @@ int main(int argc, char** argv) {
             st = clEnqueueReadBuffer(queue, d_words_g4, CL_TRUE, 0,
                                      words_g4.size() * sizeof(uint32_t), words_g4.data(), 0, nullptr, nullptr);
             if (!check_status(st, "clEnqueueReadBuffer(g4_check)")) return 4;
+            st = clEnqueueReadBuffer(queue, d_words_g5, CL_TRUE, 0,
+                                     words_g5.size() * sizeof(uint32_t), words_g5.data(), 0, nullptr, nullptr);
+            if (!check_status(st, "clEnqueueReadBuffer(g5_check)")) return 4;
+            st = clEnqueueReadBuffer(queue, d_words_g6, CL_TRUE, 0,
+                                     words_g6.size() * sizeof(uint32_t), words_g6.data(), 0, nullptr, nullptr);
+            if (!check_status(st, "clEnqueueReadBuffer(g6_check)")) return 4;
         }
 
         bool ok = true;
@@ -585,6 +677,20 @@ int main(int argc, char** argv) {
                     ok = false;
                     break;
                 }
+                for (int j = 0; j < 8; ++j) {
+                    store_be(got + j * 4, words_g5[i * 8 + j]);
+                }
+                if (std::memcmp(got, expected, 32) != 0) {
+                    ok = false;
+                    break;
+                }
+                for (int j = 0; j < 8; ++j) {
+                    store_be(got + j * 4, words_g6[i * 8 + j]);
+                }
+                if (std::memcmp(got, expected, 32) != 0) {
+                    ok = false;
+                    break;
+                }
             }
         }
         clReleaseMemObject(d_nonces);
@@ -592,9 +698,11 @@ int main(int argc, char** argv) {
         clReleaseMemObject(d_words_g2);
         clReleaseMemObject(d_words_g3);
         clReleaseMemObject(d_words_g4);
+        clReleaseMemObject(d_words_g5);
+        clReleaseMemObject(d_words_g6);
         if (!ok) {
             std::fprintf(stderr, "Correctness check failed for OpenCL G1%s\n",
-                         options.check_all ? "/G2/G3/G4" : "");
+                         options.check_all ? "/G2/G3/G4/G5/G6" : "");
             return 4;
         }
     }
@@ -632,6 +740,20 @@ int main(int argc, char** argv) {
     st |= clSetKernelArg(kernel_g4_bench, 4, sizeof(cl_mem), &d_out);
     if (!check_status(st, "clSetKernelArg(g4_bench)")) return 5;
 
+    st = clSetKernelArg(kernel_g5_bench, 0, sizeof(cl_mem), &d_header);
+    st |= clSetKernelArg(kernel_g5_bench, 1, sizeof(cl_mem), &d_midstate);
+    st |= clSetKernelArg(kernel_g5_bench, 2, sizeof(uint32_t), &nonce_base);
+    st |= clSetKernelArg(kernel_g5_bench, 3, sizeof(uint32_t), &iter_u32);
+    st |= clSetKernelArg(kernel_g5_bench, 4, sizeof(cl_mem), &d_out);
+    if (!check_status(st, "clSetKernelArg(g5_bench)")) return 5;
+
+    st = clSetKernelArg(kernel_g6_bench, 0, sizeof(cl_mem), &d_header);
+    st |= clSetKernelArg(kernel_g6_bench, 1, sizeof(cl_mem), &d_midstate);
+    st |= clSetKernelArg(kernel_g6_bench, 2, sizeof(uint32_t), &nonce_base);
+    st |= clSetKernelArg(kernel_g6_bench, 3, sizeof(uint32_t), &iter_u32);
+    st |= clSetKernelArg(kernel_g6_bench, 4, sizeof(cl_mem), &d_out);
+    if (!check_status(st, "clSetKernelArg(g6_bench)")) return 5;
+
     const size_t local = 256;
     const size_t global = ((static_cast<size_t>(options.iter) + local - 1) / local) * local;
 
@@ -665,6 +787,55 @@ int main(int argc, char** argv) {
     if (!check_status(st, "clFinish(g4_bench)")) return 5;
     auto t7 = std::chrono::high_resolution_clock::now();
 
+    cl_uint max_queues = 1;
+    st = clGetDeviceInfo(device, CL_DEVICE_QUEUE_ON_HOST_PROPERTIES, sizeof(max_queues), &max_queues, nullptr);
+    (void)st;
+
+    const int g5_queues = 2;
+    const int chunk = (options.iter + g5_queues - 1) / g5_queues;
+    cl_command_queue q_extra = clCreateCommandQueue(context, device, 0, &st);
+    if (!check_status(st, "clCreateCommandQueue(extra)")) return 5;
+    cl_mem d_out_q1 = clCreateBuffer(context, CL_MEM_WRITE_ONLY,
+                                     static_cast<size_t>(chunk) * sizeof(uint32_t), nullptr, &st);
+    if (!check_status(st, "clCreateBuffer(out_q1)")) return 5;
+
+    auto t8 = std::chrono::high_resolution_clock::now();
+    for (int q = 0; q < g5_queues; ++q) {
+        const int start = q * chunk;
+        if (start >= options.iter) continue;
+        const int cnt = (options.iter - start < chunk) ? (options.iter - start) : chunk;
+        const uint32_t q_nonce = static_cast<uint32_t>(start);
+        const uint32_t q_iter = static_cast<uint32_t>(cnt);
+        cl_mem q_out = (q == 0) ? d_out : d_out_q1;
+
+        st = clSetKernelArg(kernel_g5_bench, 2, sizeof(uint32_t), &q_nonce);
+        st |= clSetKernelArg(kernel_g5_bench, 3, sizeof(uint32_t), &q_iter);
+        st |= clSetKernelArg(kernel_g5_bench, 4, sizeof(cl_mem), &q_out);
+        if (!check_status(st, "clSetKernelArg(g5_bench, chunk)")) return 5;
+
+        const size_t q_global = ((static_cast<size_t>(cnt) + local - 1) / local) * local;
+        cl_command_queue qh = (q == 0) ? queue : q_extra;
+        st = clEnqueueNDRangeKernel(qh, kernel_g5_bench, 1, nullptr, &q_global, &local, 0, nullptr, nullptr);
+        if (!check_status(st, "clEnqueueNDRangeKernel(g5_bench)")) return 5;
+    }
+    st = clFinish(queue);
+    if (!check_status(st, "clFinish(g5, q0)")) return 5;
+    st = clFinish(q_extra);
+    if (!check_status(st, "clFinish(g5, q1)")) return 5;
+    auto t9 = std::chrono::high_resolution_clock::now();
+
+    int compute_units = 1;
+    st = clGetDeviceInfo(device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(compute_units), &compute_units, nullptr);
+    (void)st;
+    if (compute_units < 1) compute_units = 1;
+    const size_t global_g6 = static_cast<size_t>(compute_units) * 256u * 8u;
+    auto t10 = std::chrono::high_resolution_clock::now();
+    st = clEnqueueNDRangeKernel(queue, kernel_g6_bench, 1, nullptr, &global_g6, &local, 0, nullptr, nullptr);
+    if (!check_status(st, "clEnqueueNDRangeKernel(g6_bench)")) return 5;
+    st = clFinish(queue);
+    if (!check_status(st, "clFinish(g6_bench)")) return 5;
+    auto t11 = std::chrono::high_resolution_clock::now();
+
     uint32_t sink = 0;
     st = clEnqueueReadBuffer(queue, d_out, CL_TRUE, 0, sizeof(uint32_t), &sink, 0, nullptr, nullptr);
     if (!check_status(st, "clEnqueueReadBuffer(out)")) return 5;
@@ -690,18 +861,36 @@ int main(int argc, char** argv) {
     const double hs_g4 = static_cast<double>(options.iter) / safe_seconds_g4;
     const double ns_g4 = (safe_seconds_g4 * 1e9) / static_cast<double>(options.iter);
 
+    const double seconds_g5 = std::chrono::duration<double>(t9 - t8).count();
+    const double safe_seconds_g5 = seconds_g5 > 0.0 ? seconds_g5 : 1e-9;
+    const double hs_g5 = static_cast<double>(options.iter) / safe_seconds_g5;
+    const double ns_g5 = (safe_seconds_g5 * 1e9) / static_cast<double>(options.iter);
+
+    const double seconds_g6 = std::chrono::duration<double>(t11 - t10).count();
+    const double safe_seconds_g6 = seconds_g6 > 0.0 ? seconds_g6 : 1e-9;
+    const double hs_g6 = static_cast<double>(options.iter) / safe_seconds_g6;
+    const double ns_g6 = (safe_seconds_g6 * 1e9) / static_cast<double>(options.iter);
+
     std::printf("G1,%.6f,%.6f\n", hs_g1, ns_g1);
     std::printf("G2,%.6f,%.6f\n", hs_g2, ns_g2);
     std::printf("G3,%.6f,%.6f\n", hs_g3, ns_g3);
     std::printf("G4,%.6f,%.6f\n", hs_g4, ns_g4);
+    std::printf("G5,%.6f,%.6f\n", hs_g5, ns_g5);
+    std::printf("G6,%.6f,%.6f\n", hs_g6, ns_g6);
 
+    clReleaseMemObject(d_out_q1);
+    clReleaseCommandQueue(q_extra);
     clReleaseMemObject(d_out);
     clReleaseMemObject(d_midstate);
     clReleaseMemObject(d_header);
+    clReleaseKernel(kernel_g6_check);
+    clReleaseKernel(kernel_g5_check);
     clReleaseKernel(kernel_g4_check);
     clReleaseKernel(kernel_g3_check);
     clReleaseKernel(kernel_g2_check);
     clReleaseKernel(kernel_g1_check);
+    clReleaseKernel(kernel_g6_bench);
+    clReleaseKernel(kernel_g5_bench);
     clReleaseKernel(kernel_g4_bench);
     clReleaseKernel(kernel_g3_bench);
     clReleaseKernel(kernel_g2_bench);
