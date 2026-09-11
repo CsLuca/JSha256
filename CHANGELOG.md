@@ -42,8 +42,9 @@ All notable changes to this project are documented in this file.
 - GPU phase-1 row `G3` (schedule-specialized model) in benchmark output when CUDA driver is detected.
 - GPU phase-1 row `G4` (batched nonce model) in benchmark output when CUDA driver is detected.
 - GPU phase-1 row `G5` (multi-stream/overlap model) in benchmark output when CUDA driver is detected.
+- GPU phase-1 row `G6` (occupancy-tuned model) in benchmark output when CUDA driver is detected.
 - GPU device detection improved to check CUDA driver presence (`nvcuda.dll`).
-- GUI labels updated to `V1..V15 + G1..G5`.
+- GUI labels updated to `V1..V15 + G1..G6`.
 
 ### Validation
 

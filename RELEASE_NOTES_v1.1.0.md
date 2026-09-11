@@ -4,9 +4,9 @@ Release introducing first GPU benchmark entry integrations.
 
 ## Highlights
 
-- Added GPU benchmark rows `G1..G5` (phase-1 entry paths) in the benchmark pipeline.
+- Added GPU benchmark rows `G1..G6` (phase-1 entry paths) in the benchmark pipeline.
 - Added CUDA driver detection (`nvcuda.dll`) to enable GPU-row availability checks.
-- Updated GUI labels and title to `V1..V15 + G1..G5`.
+- Updated GUI labels and title to `V1..V15 + G1..G6`.
 - Kept CPU pipeline and validation stable (`V1..V15`).
 
 ## Validation
