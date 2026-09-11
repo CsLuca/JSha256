@@ -1920,13 +1920,108 @@ static LRESULT CALLBACK ChartWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 max_h = 1.0;
             }
 
-            int y = 72;
+            const bench::BenchmarkResult* top_cpu = nullptr;
+            const bench::BenchmarkResult* top_gpu = nullptr;
+            for (const auto& r : sorted) {
+                if (!top_cpu && r.engine == "CPU") {
+                    top_cpu = &r;
+                }
+                if (!top_gpu && r.engine == "GPU") {
+                    top_gpu = &r;
+                }
+                if (top_cpu && top_gpu) {
+                    break;
+                }
+            }
+
+            const int card_y = 42;
+            const int card_h = 52;
+            const int card_gap = 10;
+            const int card_w = (rc.right - 28 - card_gap) / 2;
+            RECT cpu_card{14, card_y, 14 + card_w, card_y + card_h};
+            RECT gpu_card{14 + card_w + card_gap, card_y, 14 + card_w + card_gap + card_w, card_y + card_h};
+
+            HBRUSH card_bg = CreateSolidBrush(RGB(255, 255, 255));
+            HBRUSH card_border = CreateSolidBrush(RGB(217, 224, 236));
+
+            FillRect(hdc, &cpu_card, card_bg);
+            FrameRect(hdc, &cpu_card, card_border);
+            FillRect(hdc, &gpu_card, card_bg);
+            FrameRect(hdc, &gpu_card, card_border);
+
+            DeleteObject(card_bg);
+            DeleteObject(card_border);
+
+            SetTextColor(hdc, RGB(75, 88, 116));
+            TextOutA(hdc, cpu_card.left + 8, cpu_card.top + 6, "Top CPU", 7);
+            TextOutA(hdc, gpu_card.left + 8, gpu_card.top + 6, "Top GPU", 7);
+
+            std::ostringstream cpu_v;
+            cpu_v << std::fixed << std::setprecision(2)
+                  << (top_cpu ? (top_cpu->hashes_per_sec / 1e6) : 0.0) << " MH/s";
+            std::ostringstream gpu_v;
+            gpu_v << std::fixed << std::setprecision(2)
+                  << (top_gpu ? (top_gpu->hashes_per_sec / 1e6) : 0.0) << " MH/s";
+
+            SetTextColor(hdc, RGB(24, 38, 66));
+            const std::string cpu_s = cpu_v.str();
+            const std::string gpu_s = gpu_v.str();
+            TextOutA(hdc, cpu_card.left + 8, cpu_card.top + 26, cpu_s.c_str(), static_cast<int>(cpu_s.size()));
+            TextOutA(hdc, gpu_card.left + 8, gpu_card.top + 26, gpu_s.c_str(), static_cast<int>(gpu_s.size()));
+
+            auto color_for_row = [](const bench::BenchmarkResult& r) -> COLORREF {
+                if (r.engine == "GPU") {
+                    if (r.gpu_api == "CUDA") return RGB(27, 142, 76);
+                    if (r.gpu_api == "OPENCL") return RGB(24, 102, 211);
+                    return RGB(80, 127, 192);
+                }
+                return RGB(94, 104, 126);
+            };
+
+            const int legend_y = card_y + card_h + 12;
+            struct LegendItem { const char* name; COLORREF c; };
+            const LegendItem legend[] = {
+                {"CPU", RGB(94, 104, 126)},
+                {"CUDA", RGB(27, 142, 76)},
+                {"OPENCL", RGB(24, 102, 211)}
+            };
+            int lx = 14;
+            for (const auto& it : legend) {
+                RECT dot{lx, legend_y + 3, lx + 12, legend_y + 15};
+                HBRUSH b = CreateSolidBrush(it.c);
+                FillRect(hdc, &dot, b);
+                DeleteObject(b);
+                TextOutA(hdc, lx + 16, legend_y, it.name, static_cast<int>(std::strlen(it.name)));
+                lx += 96;
+            }
+
+            int y = legend_y + 24;
             const int left_label = 14;
             const int bar_x = 170;
             const int bar_h = 20;
             const int row_gap = 12;
             const int right_margin = 14;
             const int bar_w_max = std::max(80, rc.right - bar_x - right_margin);
+            const int axis_y = rc.bottom - 26;
+
+            HPEN axis_pen = CreatePen(PS_SOLID, 1, RGB(170, 181, 202));
+            HPEN old_pen = static_cast<HPEN>(SelectObject(hdc, axis_pen));
+            MoveToEx(hdc, bar_x, axis_y, nullptr);
+            LineTo(hdc, bar_x + bar_w_max, axis_y);
+
+            for (int i = 0; i <= 5; ++i) {
+                const int tx = bar_x + (bar_w_max * i) / 5;
+                MoveToEx(hdc, tx, axis_y, nullptr);
+                LineTo(hdc, tx, axis_y + 5);
+
+                std::ostringstream tick;
+                tick << std::fixed << std::setprecision(1) << ((max_h / 1e6) * (static_cast<double>(i) / 5.0));
+                const std::string t = tick.str();
+                TextOutA(hdc, tx - 10, axis_y + 8, t.c_str(), static_cast<int>(t.size()));
+            }
+            SelectObject(hdc, old_pen);
+            DeleteObject(axis_pen);
+            TextOutA(hdc, bar_x + bar_w_max - 34, axis_y + 8, "MH/s", 4);
 
             for (size_t i = 0; i < N; ++i) {
                 const auto& r = sorted[i];
@@ -1934,23 +2029,27 @@ static LRESULT CALLBACK ChartWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 
                 std::ostringstream lbl;
                 lbl << r.version << " " << r.simd;
+                if (r.engine == "GPU") {
+                    lbl << " " << r.gpu_api;
+                }
                 const std::string label = lbl.str();
                 SetTextColor(hdc, RGB(41, 55, 85));
                 TextOutA(hdc, left_label, y + 2, label.c_str(), static_cast<int>(label.size()));
 
                 RECT bar_rc{bar_x, y, bar_x + bw, y + bar_h};
-                HBRUSH bar_br = CreateSolidBrush(i == 0 ? RGB(18, 102, 211) : RGB(57, 148, 233));
+                COLORREF base_c = color_for_row(r);
+                HBRUSH bar_br = CreateSolidBrush(i == 0 ? RGB(13, 85, 182) : base_c);
                 FillRect(hdc, &bar_rc, bar_br);
                 DeleteObject(bar_br);
 
                 std::ostringstream v;
-                v << std::fixed << std::setprecision(0) << r.hashes_per_sec;
+                v << std::fixed << std::setprecision(2) << (r.hashes_per_sec / 1e6) << " MH/s";
                 const std::string value = v.str();
                 SetTextColor(hdc, RGB(90, 103, 130));
                 TextOutA(hdc, bar_x + bw + 8, y + 2, value.c_str(), static_cast<int>(value.size()));
 
                 y += bar_h + row_gap;
-                if (y + bar_h > rc.bottom - 8) {
+                if (y + bar_h > axis_y - 8) {
                     break;
                 }
             }
