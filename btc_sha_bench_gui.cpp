@@ -1961,7 +1961,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 return 0;
             }
             if (LOWORD(wParam) == 1005) {
-                WinExec("rundll32 url.dll,FileProtocolHandler https://www.paypal.com", SW_SHOWNORMAL);
+                WinExec("rundll32 url.dll,FileProtocolHandler https://paypal.me/LucadrBiondi", SW_SHOWNORMAL);
                 return 0;
             }
             return 0;
