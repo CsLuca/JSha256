@@ -1,12 +1,12 @@
 # JSha256 v1.1.0
 
-Release introducing first GPU benchmark entry integration.
+Release introducing first GPU benchmark entry integrations.
 
 ## Highlights
 
-- Added GPU benchmark row `G1` (phase-1 entry path) in the benchmark pipeline.
+- Added GPU benchmark rows `G1` and `G2` (phase-1 entry paths) in the benchmark pipeline.
 - Added CUDA driver detection (`nvcuda.dll`) to enable GPU-row availability checks.
-- Updated GUI labels and title to `V1..V15 + G1`.
+- Updated GUI labels and title to `V1..V15 + G1/G2`.
 - Kept CPU pipeline and validation stable (`V1..V15`).
 
 ## Validation

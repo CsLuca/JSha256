@@ -1331,6 +1331,13 @@ static std::vector<BenchmarkResult> run_all_benchmarks_once(const BenchContext& 
             }
         });
         append_row(out, "CUDA", "G1", "g1-naive-host-fallback", 1024, tr_g1, ctx.iter, "GPU");
+
+        auto tr_g2 = timed_run([&]() {
+            for (uint32_t n = 0; n < ctx.iter; ++n) {
+                hash_v1_to_v4(ctx.header, ctx.mid, n, Version::V2, ctx.sink);
+            }
+        });
+        append_row(out, "CUDA", "G2", "g2-midstate-host+blk2", 1024, tr_g2, ctx.iter, "GPU");
     }
 
     return out;
@@ -1593,7 +1600,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             CreateWindowExA(
                 0,
                 "BUTTON",
-                "Run Benchmark V1..V15 + G1",
+                "Run Benchmark V1..V15 + G1/G2",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                 12,
                 12,
@@ -1607,7 +1614,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_output = CreateWindowExA(
                 WS_EX_CLIENTEDGE,
                 "EDIT",
-                "Click 'Run Benchmark V1..V15 + G1' to start.",
+                "Click 'Run Benchmark V1..V15 + G1/G2' to start.",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
                 12,
                 56,
@@ -1666,7 +1673,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     HWND hwnd = CreateWindowExA(
         0,
         kClassName,
-        "JSha256 v1.1.0 - Benchmark V1..V15 + G1",
+        "JSha256 v1.1.0 - Benchmark V1..V15 + G1/G2",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
