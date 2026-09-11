@@ -31,7 +31,7 @@ CUDA build example for external runner:
 nvcc -O3 gpu_cuda_bench.cu -o gpu_cuda_bench.exe
 ```
 
-When `gpu_cuda_bench.exe` is present next to the GUI executable, parsed GPU rows from the runner are merged into the benchmark output.
+When `gpu_cuda_bench.exe` is present next to the GUI executable, parsed GPU rows (`G1..G6`) from the runner are merged into the benchmark output.
 
 ## Project Layout
 

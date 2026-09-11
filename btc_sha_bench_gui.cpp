@@ -1102,6 +1102,8 @@ static bool try_run_external_cuda_rows(uint32_t iter, std::vector<BenchmarkResul
             br.lanes = 2048;
         } else if (ver == "G5") {
             br.lanes = 4096;
+        } else if (ver == "G6") {
+            br.lanes = 6144;
         } else {
             br.lanes = 1024;
         }
