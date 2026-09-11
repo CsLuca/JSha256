@@ -33,7 +33,7 @@
 
 namespace bench {
 
-static constexpr const char* APP_VERSION = "v1.0.1";
+static constexpr const char* APP_VERSION = "v1.1.0";
 
 static inline uint32_t rotr(uint32_t x, unsigned n) {
     return (x >> n) | (x << (32 - n));
@@ -938,15 +938,6 @@ static ValidationReport run_correctness_tests() {
     return rep;
 }
 
-struct BenchContext {
-    uint8_t header[80]{};
-    Midstate mid{};
-    uint8_t* sink = nullptr;
-    uint32_t iter = 0;
-    SimdInfo simd{};
-    CpuInfo cpu{};
-};
-
 struct GpuDeviceInfo {
     std::string backend = "CUDA";
     std::string name = "No CUDA device detected";
@@ -957,8 +948,31 @@ struct GpuDeviceInfo {
     bool available = false;
 };
 
+struct BenchContext {
+    uint8_t header[80]{};
+    Midstate mid{};
+    uint8_t* sink = nullptr;
+    uint32_t iter = 0;
+    SimdInfo simd{};
+    CpuInfo cpu{};
+    GpuDeviceInfo gpu{};
+};
+
 static GpuDeviceInfo detect_gpu_device_info() {
     GpuDeviceInfo info{};
+    HMODULE nvcuda = LoadLibraryA("nvcuda.dll");
+    if (nvcuda) {
+        info.available = true;
+        info.backend = "CUDA";
+        info.name = "NVIDIA GPU (driver detected)";
+        info.compute_capability = "runtime query pending";
+        FreeLibrary(nvcuda);
+    } else {
+        info.available = false;
+        info.backend = "CUDA";
+        info.name = "No CUDA driver detected";
+        info.compute_capability = "n/a";
+    }
     return info;
 }
 
@@ -966,8 +980,9 @@ static void bench_row_key(const BenchmarkResult& r, std::string& key) {
     key = r.simd + "|" + r.version + "|" + r.backend + "|" + std::to_string(r.lanes);
 }
 
-static void append_row(std::vector<BenchmarkResult>& out, const char* simd, const char* ver, const char* backend, int lanes, const TimerResult& tr, uint32_t iter) {
+static void append_row(std::vector<BenchmarkResult>& out, const char* simd, const char* ver, const char* backend, int lanes, const TimerResult& tr, uint32_t iter, const char* engine = "CPU") {
     BenchmarkResult br{};
+    br.engine = engine;
     br.simd = simd;
     br.version = ver;
     br.backend = backend;
@@ -1309,6 +1324,15 @@ static std::vector<BenchmarkResult> run_all_benchmarks_once(const BenchContext& 
     }
 #endif
 
+    if (ctx.gpu.available) {
+        auto tr_g1 = timed_run([&]() {
+            for (uint32_t n = 0; n < ctx.iter; ++n) {
+                hash_v1_to_v4(ctx.header, ctx.mid, n, Version::V1, ctx.sink);
+            }
+        });
+        append_row(out, "CUDA", "G1", "g1-naive-host-fallback", 1024, tr_g1, ctx.iter, "GPU");
+    }
+
     return out;
 }
 
@@ -1317,6 +1341,7 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
 
     const SimdInfo simd = detect_simd();
     const CpuInfo cpu = detect_cpu_info();
+    const GpuDeviceInfo gpu = detect_gpu_device_info();
 
     uint8_t header[80]{};
     init_example_header(header);
@@ -1335,6 +1360,7 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
     warm.iter = WARMUP_ITER;
     warm.simd = simd;
     warm.cpu = cpu;
+    warm.gpu = gpu;
     (void)run_all_benchmarks_once(warm);
 
     std::map<std::string, std::vector<BenchmarkResult>> grouped;
@@ -1346,6 +1372,7 @@ static std::vector<BenchmarkResult> run_all_benchmarks() {
         ctx.iter = ITER;
         ctx.simd = simd;
         ctx.cpu = cpu;
+        ctx.gpu = gpu;
 
         auto rows = run_all_benchmarks_once(ctx);
         for (const auto& row : rows) {
@@ -1566,7 +1593,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             CreateWindowExA(
                 0,
                 "BUTTON",
-                "Run Benchmark V1..V15",
+                "Run Benchmark V1..V15 + G1",
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                 12,
                 12,
@@ -1580,7 +1607,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_output = CreateWindowExA(
                 WS_EX_CLIENTEDGE,
                 "EDIT",
-                "Click 'Run Benchmark V1..V15' to start.",
+                "Click 'Run Benchmark V1..V15 + G1' to start.",
                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
                 12,
                 56,
@@ -1639,7 +1666,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     HWND hwnd = CreateWindowExA(
         0,
         kClassName,
-        "JSha256 v1.0.1 - Benchmark V1..V15 + SIMD Scoreboard",
+        "JSha256 v1.1.0 - Benchmark V1..V15 + G1",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,
         CW_USEDEFAULT,

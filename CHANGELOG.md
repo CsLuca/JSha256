@@ -32,3 +32,16 @@ All notable changes to this project are documented in this file.
 
 - Windows build: PASS
 - `--selftest`: PASS
+
+## [1.1.0] - 2026-09-11
+
+### Added
+
+- GPU phase-1 entry row `G1` in benchmark output when CUDA driver is detected.
+- GPU device detection improved to check CUDA driver presence (`nvcuda.dll`).
+- GUI labels updated to `V1..V15 + G1`.
+
+### Validation
+
+- Windows build: PASS
+- `--selftest`: PASS

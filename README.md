@@ -1,6 +1,6 @@
 # JSha256
 
-Current release: **v1.0.1**
+Current release: **v1.1.0**
 
 Release status: build and `--selftest` validated locally on Windows (MSYS2 UCRT64).
 
@@ -11,7 +11,7 @@ Release notes draft: `RELEASE_NOTES_v1.0.0.md`
 ![Build](https://img.shields.io/badge/build-MSYS2%20UCRT64-brightgreen)
 ![SIMD](https://img.shields.io/badge/SIMD-SSE2%2FSSE4.1%2FAVX%2FAVX2%2FSHA--NI-orange)
 
-Win32 GUI benchmark for Bitcoin-style `double-SHA256` optimization stages `V1..V15`.
+Win32 GUI benchmark for Bitcoin-style `double-SHA256` optimization stages `V1..V15` plus GPU `G1` scaffold run.
 
 It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboard with:
 
@@ -22,6 +22,7 @@ It detects CPU SIMD capabilities, runs all versions, and shows a ranked scoreboa
 - repeat-run statistics (`Std H/s`, `Std Cyc`) with warmup
 - automatic export in `benchmark-output/results-*.csv` and `benchmark-output/results-*.json`
 - phase-0 GPU integration scaffold (`Engine` column + GPU device info section)
+- phase-1 entry point with `G1` benchmark row when CUDA driver is detected
 
 ## Project Layout
 
