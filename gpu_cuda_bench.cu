@@ -150,6 +150,55 @@ __host__ __device__ inline void sha256_compress(uint32_t state[8],
     state[7] += h;
 }
 
+__host__ __device__ inline void sha256_compress_words(uint32_t state[8],
+                                                      const uint32_t w16[16],
+                                                      const uint32_t k[64]) {
+    uint32_t w[64];
+    for (int i = 0; i < 16; ++i) {
+        w[i] = w16[i];
+    }
+    for (int i = 16; i < 64; ++i) {
+        const uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3u);
+        const uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10u);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+
+    uint32_t a = state[0];
+    uint32_t b = state[1];
+    uint32_t c = state[2];
+    uint32_t d = state[3];
+    uint32_t e = state[4];
+    uint32_t f = state[5];
+    uint32_t g = state[6];
+    uint32_t h = state[7];
+
+    for (int i = 0; i < 64; ++i) {
+        const uint32_t S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+        const uint32_t ch = (e & f) ^ ((~e) & g);
+        const uint32_t temp1 = h + S1 + ch + k[i] + w[i];
+        const uint32_t S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+        const uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        const uint32_t temp2 = S0 + maj;
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+
+    state[0] += a;
+    state[1] += b;
+    state[2] += c;
+    state[3] += d;
+    state[4] += e;
+    state[5] += f;
+    state[6] += g;
+    state[7] += h;
+}
+
 __host__ __device__ inline void build_second_block_80(const uint8_t tail16[16],
                                                        uint32_t nonce,
                                                        uint8_t out64[64]) {
@@ -225,6 +274,45 @@ __device__ inline void double_sha256_header_g2(uint32_t nonce, uint32_t out_dige
     }
 }
 
+__device__ inline void double_sha256_header_g3_sched(uint32_t nonce, uint32_t out_digest[8]) {
+    uint32_t state1[8];
+    for (int i = 0; i < 8; ++i) {
+        state1[i] = c_midstate[i];
+    }
+
+    uint32_t w1[16];
+    w1[0] = load_be(c_header + 64);
+    w1[1] = load_be(c_header + 68);
+    w1[2] = load_be(c_header + 72);
+    w1[3] = nonce;
+    w1[4] = 0x80000000u;
+    for (int i = 5; i < 15; ++i) {
+        w1[i] = 0u;
+    }
+    w1[15] = 640u;
+    sha256_compress_words(state1, w1, c_sha_k);
+
+    uint32_t state2[8];
+    for (int i = 0; i < 8; ++i) {
+        state2[i] = kShaInit[i];
+    }
+
+    uint32_t w2[16];
+    for (int i = 0; i < 8; ++i) {
+        w2[i] = state1[i];
+    }
+    w2[8] = 0x80000000u;
+    for (int i = 9; i < 15; ++i) {
+        w2[i] = 0u;
+    }
+    w2[15] = 256u;
+    sha256_compress_words(state2, w2, c_sha_k);
+
+    for (int i = 0; i < 8; ++i) {
+        out_digest[i] = state2[i];
+    }
+}
+
 __global__ void g1_naive_kernel(uint32_t* out, uint32_t iter, uint32_t nonce_base) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= iter) {
@@ -251,18 +339,28 @@ __global__ void g3_schedule_kernel(uint32_t* out, uint32_t iter, uint32_t nonce_
         return;
     }
     uint32_t digest[8];
-    double_sha256_header_g2(nonce_base + idx, digest);
-    out[idx] = digest[0] ^ 0x9e3779b9u;
+    double_sha256_header_g3_sched(nonce_base + idx, digest);
+    out[idx] = digest[0];
 }
 
 __global__ void g4_batched_kernel(uint32_t* out, uint32_t iter, uint32_t nonce_base) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= iter) {
+    const uint32_t base = nonce_base + idx * 4u;
+    const uint32_t end_nonce = nonce_base + iter;
+    if (base >= end_nonce) {
         return;
     }
-    uint32_t digest[8];
-    double_sha256_header_g2(nonce_base + idx, digest);
-    out[idx] = digest[1];
+    uint32_t acc = 0u;
+    for (uint32_t lane = 0; lane < 4u; ++lane) {
+        const uint32_t n = base + lane;
+        if (n >= end_nonce) {
+            break;
+        }
+        uint32_t digest[8];
+        double_sha256_header_g3_sched(n, digest);
+        acc ^= digest[0] ^ (digest[1] + lane);
+    }
+    out[idx] = acc;
 }
 
 __global__ void g5_stream_kernel(uint32_t* out, uint32_t iter, uint32_t nonce_base) {
@@ -428,6 +526,8 @@ bool parse_options(int argc, char** argv, Options& options) {
 bool run_benchmarks(int iter, Timing& timing) {
     const int threads = 256;
     const int blocks = (iter + threads - 1) / threads;
+    const int iter_g4 = (iter + 3) / 4;
+    const int blocks_g4 = (iter_g4 + threads - 1) / threads;
 
     uint32_t* d_out = nullptr;
     CUDA_CHECK(cudaMalloc(&d_out, static_cast<size_t>(iter) * sizeof(uint32_t)));
@@ -449,7 +549,7 @@ bool run_benchmarks(int iter, Timing& timing) {
     CUDA_CHECK(cudaDeviceSynchronize());
     auto t3 = std::chrono::high_resolution_clock::now();
 
-    g4_batched_kernel<<<blocks, threads>>>(d_out, static_cast<uint32_t>(iter), 0u);
+    g4_batched_kernel<<<blocks_g4, threads>>>(d_out, static_cast<uint32_t>(iter), 0u);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
     auto t4 = std::chrono::high_resolution_clock::now();
