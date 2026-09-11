@@ -396,6 +396,7 @@ static SimdInfo detect_simd() {
 
 struct BenchmarkResult {
     std::string engine = "CPU";
+    std::string gpu_api = "-";
     std::string simd;
     std::string version;
     std::string backend;
@@ -1080,6 +1081,7 @@ static GpuDeviceInfo detect_gpu_device_info() {
 static bool try_run_external_rows(uint32_t iter,
                                   const char* exe,
                                   const char* simd,
+                                  const char* gpu_api,
                                   const char* backend,
                                   std::vector<BenchmarkResult>& out) {
     std::ostringstream cmd;
@@ -1107,6 +1109,7 @@ static bool try_run_external_rows(uint32_t iter,
 
         BenchmarkResult br{};
         br.engine = "GPU";
+        br.gpu_api = gpu_api;
         br.simd = simd;
         br.version = ver;
         br.backend = backend;
@@ -1132,12 +1135,13 @@ static bool try_run_external_rows(uint32_t iter,
 }
 
 static void bench_row_key(const BenchmarkResult& r, std::string& key) {
-    key = r.simd + "|" + r.version + "|" + r.backend + "|" + std::to_string(r.lanes);
+    key = r.engine + "|" + r.gpu_api + "|" + r.simd + "|" + r.version + "|" + r.backend + "|" + std::to_string(r.lanes);
 }
 
 static void append_row(std::vector<BenchmarkResult>& out, const char* simd, const char* ver, const char* backend, int lanes, const TimerResult& tr, uint32_t iter, const char* engine = "CPU") {
     BenchmarkResult br{};
     br.engine = engine;
+    br.gpu_api = (std::strcmp(engine, "GPU") == 0) ? simd : "-";
     br.simd = simd;
     br.version = ver;
     br.backend = backend;
@@ -1155,12 +1159,12 @@ static std::vector<BenchmarkResult> run_all_benchmarks_once(const BenchContext& 
     bool external_ok = false;
     if (external_allowed) {
         std::vector<BenchmarkResult> tmp;
-        if (try_run_external_rows(ctx.iter, "gpu_cuda_bench.exe", "CUDA", "cuda-real-external", tmp)) {
+        if (try_run_external_rows(ctx.iter, "gpu_cuda_bench.exe", "CUDA", "CUDA", "cuda-real-external", tmp)) {
             external_ok = true;
             out.insert(out.end(), tmp.begin(), tmp.end());
         }
         tmp.clear();
-        if (try_run_external_rows(ctx.iter, "gpu_opencl_bench.exe", "OPENCL", "opencl-real-external", tmp)) {
+        if (try_run_external_rows(ctx.iter, "gpu_opencl_bench.exe", "OPENCL", "OPENCL", "opencl-real-external", tmp)) {
             external_ok = true;
             out.insert(out.end(), tmp.begin(), tmp.end());
         }
@@ -1736,6 +1740,7 @@ static std::string format_results(const std::vector<BenchmarkResult>& rows, cons
     oss << validation.text;
     oss << build_bar_chart(rows);
     oss << std::left << std::setw(8) << "Engine"
+        << std::setw(8) << "API"
         << std::setw(10) << "SIMD"
         << std::setw(6) << "Ver"
         << std::setw(17) << "Backend"
@@ -1745,9 +1750,10 @@ static std::string format_results(const std::vector<BenchmarkResult>& rows, cons
         << std::setw(14) << "Cycles/hash"
         << std::setw(12) << "Std Cyc"
         << "\r\n";
-    oss << "---------------------------------------------------------------------------------------------------\r\n";
+    oss << "-----------------------------------------------------------------------------------------------------------\r\n";
     for (const auto& r : sorted) {
         oss << std::left << std::setw(8) << r.engine
+            << std::setw(8) << r.gpu_api
             << std::setw(10) << r.simd
             << std::setw(6) << r.version
             << std::setw(17) << r.backend
@@ -1774,9 +1780,11 @@ static void export_results_files(const std::vector<BenchmarkResult>& rows, const
 
     std::ofstream csv(csv_path.string(), std::ios::binary);
     if (csv) {
-        csv << "simd,version,backend,lanes,hashes_per_sec,std_hashes_per_sec,min_hashes_per_sec,max_hashes_per_sec,cycles_per_hash,std_cycles_per_hash\n";
+        csv << "engine,gpu_api,simd,version,backend,lanes,hashes_per_sec,std_hashes_per_sec,min_hashes_per_sec,max_hashes_per_sec,cycles_per_hash,std_cycles_per_hash\n";
         for (const auto& r : rows) {
             csv
+                << csv_escape(r.engine) << ","
+                << csv_escape(r.gpu_api) << ","
                 << csv_escape(r.simd) << ","
                 << csv_escape(r.version) << ","
                 << csv_escape(r.backend) << ","
@@ -1800,6 +1808,8 @@ static void export_results_files(const std::vector<BenchmarkResult>& rows, const
         for (size_t i = 0; i < rows.size(); ++i) {
             const auto& r = rows[i];
             json << "    {\n";
+            json << "      \"engine\": \"" << json_escape(r.engine) << "\",\n";
+            json << "      \"gpu_api\": \"" << json_escape(r.gpu_api) << "\",\n";
             json << "      \"simd\": \"" << json_escape(r.simd) << "\",\n";
             json << "      \"version\": \"" << json_escape(r.version) << "\",\n";
             json << "      \"backend\": \"" << json_escape(r.backend) << "\",\n";

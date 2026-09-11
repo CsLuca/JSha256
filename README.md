@@ -38,7 +38,7 @@ OpenCL build example for external runner:
 g++ -std=c++17 -O3 gpu_opencl_bench.cpp -o gpu_opencl_bench.exe -lOpenCL
 ```
 
-When `gpu_cuda_bench.exe` and/or `gpu_opencl_bench.exe` are present next to the GUI executable, parsed GPU rows from available external runners are merged into the benchmark output.
+When `gpu_cuda_bench.exe` and/or `gpu_opencl_bench.exe` are present next to the GUI executable, parsed GPU rows from available external runners are merged into the benchmark output. Exports now include `engine` and `gpu_api` columns/fields so CUDA and OpenCL rows are clearly separated.
 
 ## Project Layout
 
