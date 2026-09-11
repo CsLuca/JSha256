@@ -369,18 +369,20 @@ __global__ void g5_stream_kernel(uint32_t* out, uint32_t iter, uint32_t nonce_ba
         return;
     }
     uint32_t digest[8];
-    double_sha256_header_g2(nonce_base + idx, digest);
+    double_sha256_header_g3_sched(nonce_base + idx, digest);
     out[idx] = digest[2];
 }
 
-__global__ void g6_tuned_kernel(uint32_t* out, uint32_t iter, uint32_t nonce_base) {
+__global__ __launch_bounds__(256, 2) void g6_tuned_kernel(uint32_t* out,
+                                                           uint32_t iter,
+                                                           uint32_t nonce_base) {
     const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= iter) {
-        return;
+    const uint32_t stride = blockDim.x * gridDim.x;
+    for (uint32_t i = idx; i < iter; i += stride) {
+        uint32_t digest[8];
+        double_sha256_header_g3_sched(nonce_base + i, digest);
+        out[i] = digest[3];
     }
-    uint32_t digest[8];
-    double_sha256_header_g2(nonce_base + idx, digest);
-    out[idx] = digest[3];
 }
 
 __global__ void g1_check_kernel(const uint32_t* nonces, uint8_t* out_hashes, uint32_t count) {
@@ -523,6 +525,75 @@ bool parse_options(int argc, char** argv, Options& options) {
     return true;
 }
 
+bool run_g5_multistream_overlap(int iter, double& seconds) {
+    constexpr int kStreams = 3;
+    constexpr int kThreads = 256;
+    constexpr int kChunk = 65536;
+
+    cudaStream_t streams[kStreams] = {};
+    uint32_t* d_out[kStreams] = {};
+    uint32_t* h_out[kStreams] = {};
+    bool stream_used[kStreams] = {false, false, false};
+
+    for (int i = 0; i < kStreams; ++i) {
+        CUDA_CHECK(cudaStreamCreate(&streams[i]));
+        CUDA_CHECK(cudaMalloc(&d_out[i], static_cast<size_t>(kChunk) * sizeof(uint32_t)));
+        CUDA_CHECK(cudaHostAlloc(&h_out[i], static_cast<size_t>(kChunk) * sizeof(uint32_t), cudaHostAllocDefault));
+    }
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    for (int offset = 0; offset < iter; offset += kChunk * kStreams) {
+        for (int s = 0; s < kStreams; ++s) {
+            const int start = offset + s * kChunk;
+            if (start >= iter) {
+                continue;
+            }
+            const int remaining = iter - start;
+            const int count = remaining < kChunk ? remaining : kChunk;
+            const int blocks = (count + kThreads - 1) / kThreads;
+            stream_used[s] = true;
+
+            g5_stream_kernel<<<blocks, kThreads, 0, streams[s]>>>(
+                d_out[s], static_cast<uint32_t>(count), static_cast<uint32_t>(start));
+            CUDA_CHECK(cudaGetLastError());
+
+            CUDA_CHECK(cudaMemcpyAsync(h_out[s], d_out[s],
+                                       static_cast<size_t>(count) * sizeof(uint32_t),
+                                       cudaMemcpyDeviceToHost, streams[s]));
+        }
+    }
+
+    for (int i = 0; i < kStreams; ++i) {
+        CUDA_CHECK(cudaStreamSynchronize(streams[i]));
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    seconds = std::chrono::duration<double>(t1 - t0).count();
+
+    volatile uint32_t sink = 0;
+    for (int i = 0; i < kStreams; ++i) {
+        if (stream_used[i]) {
+            sink ^= h_out[i][0];
+        }
+    }
+    (void)sink;
+
+    for (int i = 0; i < kStreams; ++i) {
+        if (h_out[i]) {
+            cudaFreeHost(h_out[i]);
+        }
+        if (d_out[i]) {
+            cudaFree(d_out[i]);
+        }
+        if (streams[i]) {
+            cudaStreamDestroy(streams[i]);
+        }
+    }
+    return true;
+}
+
 bool run_benchmarks(int iter, Timing& timing) {
     const int threads = 256;
     const int blocks = (iter + threads - 1) / threads;
@@ -554,12 +625,25 @@ bool run_benchmarks(int iter, Timing& timing) {
     CUDA_CHECK(cudaDeviceSynchronize());
     auto t4 = std::chrono::high_resolution_clock::now();
 
-    g5_stream_kernel<<<blocks, threads>>>(d_out, static_cast<uint32_t>(iter), 0u);
-    CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaFree(d_out));
+    d_out = nullptr;
+    if (!run_g5_multistream_overlap(iter, timing.g5_seconds)) {
+        return false;
+    }
     auto t5 = std::chrono::high_resolution_clock::now();
 
-    g6_tuned_kernel<<<blocks, threads>>>(d_out, static_cast<uint32_t>(iter), 0u);
+    CUDA_CHECK(cudaMalloc(&d_out, static_cast<size_t>(iter) * sizeof(uint32_t)));
+
+    int dev = 0;
+    CUDA_CHECK(cudaGetDevice(&dev));
+    cudaDeviceProp prop{};
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, dev));
+    const int threads_g6 = 256;
+    int blocks_g6 = prop.multiProcessorCount * 12;
+    if (blocks_g6 < 1) {
+        blocks_g6 = 1;
+    }
+    g6_tuned_kernel<<<blocks_g6, threads_g6>>>(d_out, static_cast<uint32_t>(iter), 0u);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
     auto t6 = std::chrono::high_resolution_clock::now();
@@ -570,7 +654,6 @@ bool run_benchmarks(int iter, Timing& timing) {
     timing.g2_seconds = std::chrono::duration<double>(t2 - t1).count();
     timing.g3_seconds = std::chrono::duration<double>(t3 - t2).count();
     timing.g4_seconds = std::chrono::duration<double>(t4 - t3).count();
-    timing.g5_seconds = std::chrono::duration<double>(t5 - t4).count();
     timing.g6_seconds = std::chrono::duration<double>(t6 - t5).count();
     return true;
 }
