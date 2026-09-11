@@ -2001,7 +2001,8 @@ static LRESULT CALLBACK ChartWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             const int bar_h = 20;
             const int row_gap = 12;
             const int right_margin = 14;
-            const int bar_w_max = std::max(80, rc.right - bar_x - right_margin);
+            const int client_right = static_cast<int>(rc.right);
+            const int bar_w_max = std::max(80, client_right - bar_x - right_margin);
             const int axis_y = rc.bottom - 26;
 
             HPEN axis_pen = CreatePen(PS_SOLID, 1, RGB(170, 181, 202));
@@ -2191,8 +2192,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
             const int margin = 12;
             const int top = 56;
-            const int chart_w = std::max(280, (rc.right - 3 * margin) / 3);
-            const int out_w = std::max(320, rc.right - 3 * margin - chart_w);
+            const int client_right = static_cast<int>(rc.right);
+            const int chart_w = std::max(280, (client_right - 3 * margin) / 3);
+            const int out_w = std::max(320, client_right - 3 * margin - chart_w);
             const int h = rc.bottom - 68;
 
             if (g_output) {
