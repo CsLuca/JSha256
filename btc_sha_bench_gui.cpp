@@ -413,6 +413,9 @@ struct TimerResult {
     unsigned long long cycles = 0;
 };
 
+static bool g_gpu_external_only = false;
+static bool g_gpu_external_disable = false;
+
 static std::string hex32(const uint8_t in[32]) {
     static const char* h = "0123456789abcdef";
     std::string out;
@@ -1700,6 +1703,18 @@ static std::string format_results(const std::vector<BenchmarkResult>& rows, cons
     std::ostringstream oss;
     oss << format_cpu_features();
     oss << format_gpu_features();
+
+    std::string gpu_mode = "auto";
+    if (g_gpu_external_only && g_gpu_external_disable) {
+        gpu_mode = "conflict(external-only + external-disable)";
+    } else if (g_gpu_external_only) {
+        gpu_mode = "external-only";
+    } else if (g_gpu_external_disable) {
+        gpu_mode = "external-disabled";
+    }
+    oss << "GPU run mode\r\n";
+    oss << "- Mode:     " << gpu_mode << "\r\n\r\n";
+
     oss << validation.text;
     oss << build_bar_chart(rows);
     oss << std::left << std::setw(8) << "Engine"
@@ -1821,9 +1836,6 @@ static std::string build_bar_chart(const std::vector<BenchmarkResult>& rows) {
 } // namespace bench
 
 static HWND g_output = nullptr;
-static bool g_gpu_external_only = false;
-static bool g_gpu_external_disable = false;
-
 static void set_output_text(const std::string& s) {
     SetWindowTextA(g_output, s.c_str());
 }
@@ -1890,17 +1902,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         case WM_COMMAND: {
             if (LOWORD(wParam) == 1003) {
-                g_gpu_external_only = !g_gpu_external_only;
+                bench::g_gpu_external_only = !bench::g_gpu_external_only;
                 return 0;
             }
             if (LOWORD(wParam) == 1004) {
-                g_gpu_external_disable = !g_gpu_external_disable;
+                bench::g_gpu_external_disable = !bench::g_gpu_external_disable;
                 return 0;
             }
             if (LOWORD(wParam) == 1001) {
                 set_output_text("Running benchmark...\r\n");
                 auto validation = bench::run_correctness_tests();
-                auto results = bench::run_all_benchmarks(g_gpu_external_only, g_gpu_external_disable);
+                auto results = bench::run_all_benchmarks(bench::g_gpu_external_only, bench::g_gpu_external_disable);
                 bench::export_results_files(results, validation);
                 auto text = bench::format_results(results, validation);
                 set_output_text(text);
@@ -1930,10 +1942,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
     }
 
     if (lpCmdLine && std::strstr(lpCmdLine, "--gpu-external-only") != nullptr) {
-        g_gpu_external_only = true;
+        bench::g_gpu_external_only = true;
     }
     if (lpCmdLine && std::strstr(lpCmdLine, "--gpu-external-disable") != nullptr) {
-        g_gpu_external_disable = true;
+        bench::g_gpu_external_disable = true;
     }
 
     const char* kClassName = "BtcShaBenchGuiWnd";
